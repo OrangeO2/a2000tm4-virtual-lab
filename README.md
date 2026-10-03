@@ -97,7 +97,7 @@ renode-test renode/tests/fil_adc_demo.robot   # 自动实测（注入电压→�
 - [x] v0.1 文档 + 参考模型 + Renode 基础平台（固件可跑通、ADC 静态注入、显示捕获）
 - [x] v0.2 GPIO/ADC 升级为 Renode Python 外设：TM1638 总线级双向对接（键注入 ✓）+ ADC0 真 FIFO/RIS 语义（双通道动态电压注入 ✓）
 - [x] v0.3 被控对象闭环：BuckPlant（软启动/负载阶跃/调理链）分窗协同仿真，固件显示四状态精确断言（含课程满分档误差口径）
-- [ ] v0.4 DAC6571 硬件 I2C2 外设模型 + 稳流源设定值闭环
+- [x] v0.4 GPIO L 软件 I2C 解码器 + 虚拟 DAC6571 外设模型（帧解码/码值跟踪已验证；显示撕裂问题见 docs/4）
 - [ ] v1.0 一键回归：`pytest` + `renode-test` 全绿即视为通过一次"课程验收预演"
 
 ## 致谢

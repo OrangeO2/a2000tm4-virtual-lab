@@ -1,63 +1,16 @@
-// A2000TM4 虚拟实验台 —— Renode 平台描述 v0.4
-//
-// 复刻对象：A2000TM4 底板 + EK-TM4C1294XL 核心板（TM4C1294NCPDT）
-// 平台设计/限制/路线图：docs/4-renode-fil-design.md
-// 实测依据：docs/2-measured-board-facts.md（systickFrequency=20MHz 来自 M-2 实测）
-//
-// v0.4 构成：
-//   - CPU/存储/UART 用 Renode 真模型
-//   - 虚拟实验台外设（内嵌 IronPython 脚本，单实例多地址注册）：
-//       GPIO K/M（TM1638 位级双向对接）+ GPIO L（软件 I2C → 虚拟 DAC6571）
-//       + ADC0（真 FIFO/RIS 语义）+ 实验台控制块 0x50000000
-//   - SYSCTL 等其余课程固件触达块仍为存储 stub + 监视器预置（见 a2000tm4.resc）
-//
-// 内嵌脚本语义（重要）：脚本体每次总线访问重新执行，但作用域（全局变量）跨访问
-// 持久——因此所有可变状态初始化都在 request.IsInit 分支下完成；且函数内
-// `global` 声明的名字不能在模块级（同一作用域）先被赋值，否则 IronPython 编译错。
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""生成 renode/a2000tm4.repl 的内嵌外设脚本块（v0.4 状态字典版）并写回。
 
-cpu: CPU.CortexM @ sysbus
-    cpuType: "cortex-m4f"
-    nvic: nvic
+用法：python tools/gen_bench_script.py
+（修改下方 SCRIPT 内容后重新运行即可更新 .repl）
+"""
 
-nvic: IRQControllers.NVIC @ sysbus 0xE000E000
-    systickFrequency: 20000000
-    IRQ -> cpu@0
+import io
 
-// ---------------- 存储器 [M-1 实测容量] ----------------
-flash: Memory.MappedMemory @ sysbus 0x00000000
-    size: 0x100000                                  // 1MB [M-1]
+REPL = "renode/a2000tm4.repl"
 
-sram: Memory.MappedMemory @ sysbus 0x20000000
-    size: 0x40000                                   // 256KB [M-1]
-
-// ---------------- UART0（TM4C UART 寄存器布局与 PL011 基本兼容） ----------------
-uart0: UART.PL011 @ sysbus 0x4000C000
-    IRQ -> nvic@5
-
-// ---------------- 系统控制（0x400FE000–0x400FEFFF） ----------------
-// 关键预置见 a2000tm4.resc：PLLSTAT.LOCK、RIS.MOSCPUPRIS、PRGPIO/PRADC 就绪、DID0/1、FSIZE/SSIZE
-sysctl: Memory.MappedMemory @ sysbus 0x400FE000
-    size: 0x10000
-
-// ---------------- SYSCTL 位带别名窗口 ----------------
-// TivaWare 的 SysCtlPeripheralEnable/Ready 经 HWREGBITW（Cortex-M 位带别名
-// 0x42000000 区）访问 RCGC/PR 寄存器：alias = 0x42000000 + ((reg-0x40000000)<<5)
-// + bit*4。RCGC(0x400FE600..) 与 PR(0x400FEA00..) 的别名落在 0x43FCC000 起
-// 36KB 内；Renode 1.17 无内建位带，用存储 stub + 预置 PR 就绪位（见 .resc）。
-sysctl_bitband: Memory.MappedMemory @ sysbus 0x43FCC000
-    size: 0x9000
-
-// ---------------- 虚拟实验台外设 v0.4 ----------------
-bench: Python.PythonPeripheral @ {
-    sysbus 0x40061000;
-    sysbus 0x40062000;
-    sysbus 0x40063000;
-    sysbus 0x40038000;
-    sysbus 0x50000000;
-}
-    size: 0x1000
-    initable: true
-    script: '''
+SCRIPT = r'''
 # ---- A2000TM4 虚拟实验台外设 v0.4（IronPython，状态字典版） ----
 # 说明：Renode 的 Python 外设脚本体按函数局部作用域执行——普通赋值是"局部变量"，
 # 与函数内 `global` 声明的模块全局脱节。因此所有可变状态统一放在字典 S 中，
@@ -415,50 +368,10 @@ elif request.IsRead:
     dispatch_read(request)
 '''
 
-// ---------------- ADC1（未使用，防误访问 stub） ----------------
-adc1: Memory.MappedMemory @ sysbus 0x40039000
-    size: 0x1000
-
-// ---------------- 其他课程固件可能触碰的块（防误访问） ----------------
-flashctl: Memory.MappedMemory @ sysbus 0x400FD000
-    size: 0x1000
-pwm0: Memory.MappedMemory @ sysbus 0x40028000
-    size: 0x1000
-pwm1: Memory.MappedMemory @ sysbus 0x40029000
-    size: 0x1000
-eeprom: Memory.MappedMemory @ sysbus 0x400AF000
-    size: 0x1000
-i2c0: Memory.MappedMemory @ sysbus 0x40020000
-    size: 0x1000
-i2c2: Memory.MappedMemory @ sysbus 0x40022000
-    size: 0x1000
-ssi0: Memory.MappedMemory @ sysbus 0x40008000
-    size: 0x1000
-timer0: Memory.MappedMemory @ sysbus 0x40030000
-    size: 0x1000
-wdt0: Memory.MappedMemory @ sysbus 0x40000000
-    size: 0x1000
-
-// GPIO 端口 A-J/M-N（未被实验台外设覆盖的数字 IO）保持存储 stub
-gpioa: Memory.MappedMemory @ sysbus 0x40004000
-    size: 0x1000
-gpiob: Memory.MappedMemory @ sysbus 0x40005000
-    size: 0x1000
-gpioc: Memory.MappedMemory @ sysbus 0x40006000
-    size: 0x1000
-gpiod: Memory.MappedMemory @ sysbus 0x40007000
-    size: 0x1000
-gpioe: Memory.MappedMemory @ sysbus 0x40024000
-    size: 0x1000
-gpiof: Memory.MappedMemory @ sysbus 0x40025000
-    size: 0x1000
-gpiog: Memory.MappedMemory @ sysbus 0x40026000
-    size: 0x1000
-gpioh: Memory.MappedMemory @ sysbus 0x40027000
-    size: 0x1000
-gpioj: Memory.MappedMemory @ sysbus 0x4003D000
-    size: 0x1000
-gpiop: Memory.MappedMemory @ sysbus 0x40065000
-    size: 0x1000
-gpioq: Memory.MappedMemory @ sysbus 0x40066000
-    size: 0x1000
+repl = io.open(REPL, encoding="utf-8").read()
+start = repl.index("    script: '''")
+end = repl.index("'''", start + 15) + 3
+new_block = "    script: '''" + SCRIPT + "'''"
+s = repl[:start] + new_block + repl[end:]
+io.open(REPL, "w", encoding="utf-8", newline="").write(s)
+print("REPL 已更新：%d 字符" % len(s))
