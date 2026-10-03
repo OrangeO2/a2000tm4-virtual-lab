@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  models:
+    name: 参考模型测试（pytest）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: 安装
+        run: pip install -e .
+      - name: 测试
+        run: pytest tests/ -v
+
+  renode-platform:
+    name: Renode 平台语法冒烟
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装 Renode
+        run: |
+          mkdir -p "$HOME/renode"
+          curl -sL https://github.com/renode/renode/releases/download/v1.15.3/renode-1.15.3.linux-portable.zip -o /tmp/renode.zip
+          unzip -q /tmp/renode.zip -d "$HOME/renode"
+      - name: 平台加载冒烟
+        run: |
+          RENODE="$HOME/renode/renode_1.15.3/renode"
+          chmod +x "$RENODE"
+          "$RENODE" --console -e "mach create \"a2000tm4\"; machine LoadPlatformDescription @$GITHUB_WORKSPACE/renode/a2000tm4.repl; sysbus WriteDoubleWord 0x400FE168 0x1; quit"
