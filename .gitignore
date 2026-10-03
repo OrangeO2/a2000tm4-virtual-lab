@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# 课程固件与私有材料（版权边界，见 NOTICE.md）
+firmware/local/
+**/firmware/local/**
+
+# Renode 运行产物
+renode/logs/
+*.log
+*.dump
+*.trace
+
+# IDE
+.vscode/
+.idea/
+*.uvguix.*
+
+# OS
+Thumbs.db
+.DS_Store
+
+# 其他
+*.zip
+analysis/
