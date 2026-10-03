@@ -26,10 +26,10 @@ jobs:
       - name: 安装 Renode
         run: |
           mkdir -p "$HOME/renode"
-          curl -sL https://github.com/renode/renode/releases/download/v1.15.3/renode-1.15.3.linux-portable.zip -o /tmp/renode.zip
-          unzip -q /tmp/renode.zip -d "$HOME/renode"
+          curl -sL https://github.com/renode/renode/releases/download/v1.17.0/renode-1.17.0.linux-portable.tar.gz -o /tmp/renode.tar.gz
+          tar -xzf /tmp/renode.tar.gz -C "$HOME/renode"
       - name: 平台加载冒烟
         run: |
-          RENODE="$HOME/renode/renode_1.15.3/renode"
+          RENODE="$HOME/renode/renode_1.17.0-portable/renode"
           chmod +x "$RENODE"
           "$RENODE" --console -e "mach create \"a2000tm4\"; machine LoadPlatformDescription @$GITHUB_WORKSPACE/renode/a2000tm4.repl; sysbus WriteDoubleWord 0x400FE168 0x1; quit"
