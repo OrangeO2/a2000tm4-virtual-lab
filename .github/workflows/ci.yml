@@ -33,3 +33,7 @@ jobs:
           RENODE="$HOME/renode/renode_1.17.0-portable/renode"
           chmod +x "$RENODE"
           "$RENODE" --console -e "mach create \"a2000tm4\"; machine LoadPlatformDescription @$GITHUB_WORKSPACE/renode/a2000tm4.repl; sysbus WriteDoubleWord 0x400FE168 0x1; quit"
+      - name: FIL 冒烟（无课程固件则 SKIP）
+        run: |
+          export RENODE_EXE="$HOME/renode/renode_1.17.0-portable/renode"
+          python tools/fil_smoke.py

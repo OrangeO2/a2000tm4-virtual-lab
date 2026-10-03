@@ -17,6 +17,10 @@ firmware/local/
 
 # Renode 运行产物
 renode/logs/
+robot_output.xml
+log.html
+report.html
+
 *.log
 *.dump
 *.trace

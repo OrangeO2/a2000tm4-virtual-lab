@@ -57,6 +57,31 @@ digit[0..3] = 01 05 05 02 ← 注入 ADC 码 1552 被固件采样并显示为十
    `RIS.MOSCPUPRIS`（0x400FE050 bit8）524288 次，仿真中恒 0 → 返回 0 →
    SysTick 完全失速。预置该位后时钟函数正常返回 20000000。
 
+## v0.2（已实现）：虚拟实验台外设
+
+`renode/a2000tm4.repl` 内嵌 IronPython 外设（单实例多地址注册，经
+`request.Absolute` 路由）替代了 GPIO K/M 与 ADC0 的存储 stub：
+
+| 挂载点 | 语义 |
+|---|---|
+| 0x40061000 (GPIO K) | DATA 掩码别名读写（掩码=addr[9:2]）、DIR/DEN、锁存器；PK4/PK5 电平变化喂给 TM1638 状态机 |
+| 0x40063000 (GPIO M) | 同上；PM0 边沿驱动 TM1638 时钟 |
+| 0x40038000 (ADC0) | PSSI 触发→按 SSMUX1 通道序采样激励→FIFO 压栈→RIS 置位；SSFIFO 读=弹出；ISC 清除 |
+| 0x50000000 (控制块) | 0x00 键注入（1..9/0 释放）；0x10+i GRID 解码值；0x20+i 段码；0x30+i LED；0x40/0x44 CH0/CH1 毫伏注入；0x48/0x4C 最近采样码 |
+
+实测（Renode 1.17.0）：
+
+- adc_demo：注入 CH0=CH1=1250mV → 码 1551 → GRID1-8 解码显示 "1551"×2；
+- demo：键注入 3→7→0，固件 `key_code`（0x20000019）逐步跟随；
+- 悬空引脚行为不再出现（ADC 输入由激励显式给定），存储 stub 时代的两路同值限制解除。
+
+IronPython 注意事项（踩坑实录）：
+1. 脚本体每次总线访问重新执行、作用域持久——状态初始化必须在 `request.IsInit` 下；
+2. 模块级 `global` 声明会报 "assigned to before global declaration"，直接删除；
+3. `filename:` 属性按进程 CWD 的 `File.Exists` 解析（便携版会改 CWD）→ 用内嵌
+   `script: '''...'''` 形式规避；三引号内不能出现 `'''`；
+4. 多地址注册经 `request.Absolute` 区分（`Offset` 每个注册点独立归零）。
+
 ## 测试策略
 
 - **模型层（CI 必测）**：`pytest tests/` —— 协议、被控对象、算法、实测交叉验证。

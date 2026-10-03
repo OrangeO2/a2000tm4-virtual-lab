@@ -6,7 +6,9 @@
 
 using sysbus
 mach create "a2000tm4"
-machine LoadPlatformDescription @renode/a2000tm4.repl
+# $platform 可在 include 前覆盖（renode-test 会改变 CWD，Robot 测试用绝对路径预置）
+$platform?=@renode/a2000tm4.repl
+machine LoadPlatformDescription $platform
 
 # ---------- 预置实测/就绪值（出处见 docs/2、docs/3） ----------
 sysbus WriteDoubleWord 0x400FE000 0x100A0002   # DID0 [M-1]

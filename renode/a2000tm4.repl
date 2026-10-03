@@ -1,13 +1,18 @@
-// A2000TM4 虚拟实验台 —— Renode 平台描述 v0.1
+// A2000TM4 虚拟实验台 —— Renode 平台描述 v0.2
 //
 // 复刻对象：A2000TM4 底板 + EK-TM4C1294XL 核心板（TM4C1294NCPDT）
 // 平台设计/限制/路线图：docs/4-renode-fil-design.md
 // 实测依据：docs/2-measured-board-facts.md（systickFrequency=20MHz 来自 M-2 实测）
 //
-// v0.1 策略：CPU/存储/UART 用真模型；课程固件触达的外设寄存器块用
-// MappedMemory 存储 stub + 监视器预置就绪位（见 a2000tm4.resc），
-// 使原始 .axf 无需重编译即可跑通。v0.2 起将 GPIO/SYSCTL/ADC 升级为
-// 带语义的外设模型（键注入、动态 ADC 激励、RCGC→PR 联动）。
+// v0.2 构成：
+//   - CPU/存储/UART 用 Renode 真模型
+//   - 虚拟实验台外设（内嵌 IronPython 脚本，单实例多地址注册）：
+//       GPIO K/M（TM1638 位级双向对接）+ ADC0（真 FIFO/RIS 语义）
+//       + 实验台控制块 0x50000000（键注入/显示回读/电压注入）
+//   - SYSCTL 等其余课程固件触达块仍为存储 stub + 监视器预置（见 a2000tm4.resc）
+//
+// 内嵌脚本语义：脚本体每次总线访问重新执行，但作用域（全局变量）跨访问持久——
+// 因此所有状态初始化都在 request.IsInit 分支下完成（与官方 counter.py 一致）。
 
 cpu: CPU.CortexM @ sysbus
     cpuType: "cortex-m4f"
@@ -29,55 +34,328 @@ uart0: UART.PL011 @ sysbus 0x4000C000
     IRQ -> nvic@5
 
 // ---------------- 系统控制（0x400FE000–0x400FEFFF） ----------------
-// 关键预置见 a2000tm4.resc：PLLSTAT.LOCK、PRGPIO/PRADC 就绪、DID0/1、FSIZE/SSIZE
+// 关键预置见 a2000tm4.resc：PLLSTAT.LOCK、RIS.MOSCPUPRIS、PRGPIO/PRADC 就绪、DID0/1、FSIZE/SSIZE
 sysctl: Memory.MappedMemory @ sysbus 0x400FE000
     size: 0x10000
-
-// ---------------- GPIO 端口（4KB 块，DATA 掩码别名寻址在块内） ----------------
-// 课程固件触达的端口全部映射；TM1638=K/M，ADC 输入=E，软件 I2C=L，
-// 蜂鸣器/LED/按键=F/J/N，核心板 LED=N
-gpioa: Memory.MappedMemory @ sysbus 0x40004000
-    size: 0x1000
-gpiob: Memory.MappedMemory @ sysbus 0x40005000
-    size: 0x1000
-gpioc: Memory.MappedMemory @ sysbus 0x40006000
-    size: 0x1000
-gpiod: Memory.MappedMemory @ sysbus 0x40007000
-    size: 0x1000
-gpioe: Memory.MappedMemory @ sysbus 0x40024000
-    size: 0x1000
-gpiof: Memory.MappedMemory @ sysbus 0x40025000
-    size: 0x1000
-gpiog: Memory.MappedMemory @ sysbus 0x40026000
-    size: 0x1000
-gpioh: Memory.MappedMemory @ sysbus 0x40027000
-    size: 0x1000
-gpioj: Memory.MappedMemory @ sysbus 0x4003D000
-    size: 0x1000
-gpiok: Memory.MappedMemory @ sysbus 0x40061000
-    size: 0x1000
-gpiol: Memory.MappedMemory @ sysbus 0x40062000
-    size: 0x1000
-gpiom: Memory.MappedMemory @ sysbus 0x40063000
-    size: 0x1000
-gpion: Memory.MappedMemory @ sysbus 0x40064000
-    size: 0x1000
-gpiop: Memory.MappedMemory @ sysbus 0x40065000
-    size: 0x1000
-gpioq: Memory.MappedMemory @ sysbus 0x40066000
-    size: 0x1000
 
 // ---------------- SYSCTL 位带别名窗口 ----------------
 // TivaWare 的 SysCtlPeripheralEnable/Ready 经 HWREGBITW（Cortex-M 位带别名
 // 0x42000000 区）访问 RCGC/PR 寄存器：alias = 0x42000000 + ((reg-0x40000000)<<5)
 // + bit*4。RCGC(0x400FE600..) 与 PR(0x400FEA00..) 的别名落在 0x43FCC000 起
-// 36KB 内；Renode 1.17 无内建位带，v0.1 用存储 stub + 预置 PR 就绪位（见 .resc）。
+// 36KB 内；Renode 1.17 无内建位带，v0.2 用存储 stub + 预置 PR 就绪位（见 .resc）。
 sysctl_bitband: Memory.MappedMemory @ sysbus 0x43FCC000
     size: 0x9000
 
-// ---------------- ADC0 / ADC1（adc_demo 的序列 1 触达子集见 docs/3） ----------------
-adc0: Memory.MappedMemory @ sysbus 0x40038000
+// ---------------- 虚拟实验台外设 v0.2 ----------------
+// 单实例多地址注册：GPIO K/M（TM1638 位级对接）+ ADC0（真 FIFO/RIS 语义）
+// + 实验台控制块 0x50000000（键注入/显示回读/电压注入）。
+bench: Python.PythonPeripheral @ {
+    sysbus 0x40061000;
+    sysbus 0x40063000;
+    sysbus 0x40038000;
+    sysbus 0x50000000;
+}
     size: 0x1000
+    initable: true
+    script: '''
+# ---- A2000TM4 虚拟实验台外设 v0.2（IronPython） ----
+# 常量每次访问重建（代价可忽略）；状态在 IsInit 分支一次性初始化（作用域跨访问持久）
+
+GPIO_K_BASE = 0x40061000; GPIO_K_END = 0x40062000
+GPIO_M_BASE = 0x40063000; GPIO_M_END = 0x40064000
+ADC0_BASE = 0x40038000; ADC0_END = 0x40039000
+BENCH_BASE = 0x50000000; BENCH_END = 0x50001000
+
+SEGS = {
+    "0": 0x3F, "1": 0x06, "2": 0x5B, "3": 0x4F, "4": 0x66,
+    "5": 0x6D, "6": 0x7D, "7": 0x07, "8": 0x7F, "9": 0x6F,
+    "A": 0x77, "b": 0x7C, "C": 0x39, "d": 0x5E, "E": 0x79, "F": 0x71,
+}
+KEY_TABLE = {
+    1: (0, 0x04), 2: (0, 0x02), 3: (0, 0x01),
+    4: (0, 0x40), 5: (0, 0x20), 6: (0, 0x10),
+    7: (1, 0x04), 8: (1, 0x02), 9: (1, 0x01),
+}
+REV_DIGIT = {}
+for _c in "0123456789":
+    REV_DIGIT[SEGS[_c]] = int(_c)
+for _i, _c in enumerate("AbCdEF"):
+    REV_DIGIT[SEGS[_c]] = 10 + _i
+
+
+def Warn(msg):
+    self.WarningLog("BENCH: %s" % msg)
+
+
+def key_scan_bytes():
+    c = [0, 0, 0, 0]
+    if key_pressed in KEY_TABLE:
+        idx, val = KEY_TABLE[key_pressed]
+        c[idx] = val
+    return c
+
+
+def tm_dio_out():
+    if tm_mode == "key_read" and prev_stb == 0 and 0 <= tm_read_ptr < 32:
+        byte = key_scan_bytes()[(tm_read_ptr // 8) % 4]
+        return (byte >> (tm_read_ptr % 8)) & 1
+    return 1
+
+
+def decode_seg(seg):
+    if seg & 0x7F == 0:
+        return 0xFF
+    return REV_DIGIT.get(seg & 0x7F, 0xEE)
+
+
+def tm_stb_edge(level):
+    global tm_mode, tm_shift, tm_bits, tm_frame, tm_addr, tm_read_ptr
+    if level == 0:
+        tm_mode = "command"
+        tm_shift = 0
+        tm_bits = 0
+        tm_frame = []
+        tm_read_ptr = -1
+    else:
+        if tm_mode == "data_write":
+            addr = tm_addr
+            for b in tm_frame:
+                if 0 <= addr < 16:
+                    tm_display[addr] = b
+                if tm_autoinc:
+                    addr += 1
+            tm_addr = addr
+        tm_mode = "idle"
+        tm_read_ptr = -1
+
+
+def tm_clk_edge(level):
+    global tm_shift, tm_bits, tm_mode, tm_read_ptr, tm_addr, tm_autoinc, tm_bright, tm_on
+    if prev_stb != 0:
+        return
+    if level == 1:
+        if tm_mode in ("command", "data_write"):
+            bit = (gpiok_latch >> 5) & 1
+            tm_shift = (tm_shift >> 1) | (bit << 7)
+            tm_bits += 1
+            if tm_bits == 8:
+                byte = tm_shift & 0xFF
+                tm_shift = 0
+                tm_bits = 0
+                if tm_mode == "command":
+                    if byte & 0xC0 == 0x40:
+                        if byte & 0x02:
+                            tm_mode = "key_read"
+                            tm_read_ptr = -1
+                        else:
+                            tm_autoinc = not bool(byte & 0x04)
+                            tm_mode = "data_write"
+                    elif byte & 0xC0 == 0xC0:
+                        tm_addr = byte & 0x0F
+                        tm_mode = "data_write"
+                    elif byte & 0xC0 == 0x80:
+                        tm_on = 1 if byte & 0x08 else 0
+                        tm_bright = byte & 0x07
+                        tm_mode = "idle"
+                    else:
+                        tm_mode = "idle"
+                elif tm_mode == "data_write":
+                    tm_frame.append(byte)
+    else:
+        if tm_mode == "key_read":
+            tm_read_ptr += 1
+
+
+def gpio_write(port, off, value):
+    global gpiok_latch, gpiom_latch, prev_stb, prev_clk, gpiok_dir, gpiom_dir
+    global gpiok_den, gpiom_den, gpio_misc
+    if off < 0x400:
+        mask = (off >> 2) & 0xFF
+        if port == "K":
+            new_latch = (gpiok_latch & (0xFF ^ mask)) | (value & mask)
+            gpiok_latch = new_latch
+            new_stb = (new_latch >> 4) & 1
+            if new_stb != prev_stb:
+                prev_stb = new_stb
+                tm_stb_edge(new_stb)
+        else:
+            new_latch = (gpiom_latch & (0xFF ^ mask)) | (value & mask)
+            gpiom_latch = new_latch
+            new_clk = new_latch & 1
+            if new_clk != prev_clk:
+                prev_clk = new_clk
+                tm_clk_edge(new_clk)
+    elif off == 0x400:
+        if port == "K":
+            gpiok_dir = value
+        else:
+            gpiom_dir = value
+    elif off == 0x51C:
+        if port == "K":
+            gpiok_den = value
+        else:
+            gpiom_den = value
+    else:
+        gpio_misc[(port, off)] = value
+
+
+def gpio_read(port, off):
+    if off < 0x400:
+        mask = (off >> 2) & 0xFF
+        out = 0
+        for bit in range(8):
+            m = 1 << bit
+            if mask & m == 0:
+                continue
+            if port == "K" and bit == 5 and (gpiok_dir & m) == 0:
+                if tm_dio_out():
+                    out |= m
+                continue
+            latch = gpiok_latch if port == "K" else gpiom_latch
+            if latch & m:
+                out |= m
+        return out
+    if off == 0x400:
+        return gpiok_dir if port == "K" else gpiom_dir
+    if off == 0x51C:
+        return gpiok_den if port == "K" else gpiom_den
+    return gpio_misc.get((port, off), 0)
+
+
+def adc_trigger(seq):
+    global adc_fifo1, adc_last, adc_ris
+    if seq != 1:
+        Warn("ADC 序列 %d 触发（v0.2 仅实现序列1）" % seq)
+        return
+    adc_fifo1 = []
+    for step in range(2):
+        ch = (adc_ssmux1 >> (4 * step)) & 0xF
+        mv = ch_mv[ch] if ch < 2 else 0
+        code = int(round(mv * 4095.0 / 3300.0))
+        if code > 4095:
+            code = 4095
+        adc_fifo1.append(code)
+        if ch < 2:
+            adc_last[ch] = code
+    adc_ris |= 0x2
+
+
+def adc_write(off, value):
+    global adc_actss, adc_ris, adc_emux, adc_ssmux1, adc_ssctl1, adc_pc
+    if off == 0x00:
+        adc_actss = value & 0xF
+    elif off == 0x0C:
+        adc_ris = adc_ris & (0xF ^ (value & 0xF))
+    elif off == 0x14:
+        adc_emux = value
+    elif off == 0x28:
+        for seq in range(4):
+            if value & (1 << seq):
+                adc_trigger(seq)
+    elif off == 0x60:
+        adc_ssmux1 = value & 0xFFFF
+    elif off == 0x64:
+        adc_ssctl1 = value & 0xFFFF
+    elif off == 0xFC4:
+        adc_pc = value
+    else:
+        gpio_misc[("ADC", off)] = value
+
+
+def adc_read(off):
+    if off == 0x00:
+        return adc_actss
+    if off == 0x04:
+        return adc_ris
+    if off == 0x0C:
+        return adc_ris
+    if off == 0x68:
+        if adc_fifo1:
+            return adc_fifo1.pop(0)
+        return adc_last[0]
+    if off == 0x60:
+        return adc_ssmux1
+    if off == 0x64:
+        return adc_ssctl1
+    if off == 0xFC4:
+        return adc_pc
+    return gpio_misc.get(("ADC", off), 0)
+
+
+def bench_write(off, value):
+    global key_pressed, ch_mv
+    if off == 0x00:
+        key_pressed = value & 0xF
+    elif off == 0x40:
+        ch_mv[0] = value & 0xFFFF
+    elif off == 0x44:
+        ch_mv[1] = value & 0xFFFF
+
+
+def bench_read(off):
+    if off == 0x00 or off == 0x04:
+        return key_pressed
+    if 0x10 <= off < 0x20:
+        return decode_seg(tm_display[(off - 0x10) * 2])
+    if 0x20 <= off < 0x30:
+        return tm_display[(off - 0x20) * 2]
+    if 0x30 <= off < 0x38:
+        return tm_display[(off - 0x30) * 2 + 1]
+    if off == 0x40:
+        return ch_mv[0]
+    if off == 0x44:
+        return ch_mv[1]
+    if off == 0x48:
+        return adc_last[0]
+    if off == 0x4C:
+        return adc_last[1]
+    return 0
+
+
+def dispatch_write(request):
+    a = request.Absolute
+    v = request.Value & 0xFFFFFFFF
+    if GPIO_K_BASE <= a < GPIO_K_END:
+        gpio_write("K", a - GPIO_K_BASE, v)
+    elif GPIO_M_BASE <= a < GPIO_M_END:
+        gpio_write("M", a - GPIO_M_BASE, v)
+    elif ADC0_BASE <= a < ADC0_END:
+        adc_write(a - ADC0_BASE, v)
+    elif BENCH_BASE <= a < BENCH_END:
+        bench_write(a - BENCH_BASE, v)
+
+
+def dispatch_read(request):
+    a = request.Absolute
+    v = 0
+    if GPIO_K_BASE <= a < GPIO_K_END:
+        v = gpio_read("K", a - GPIO_K_BASE)
+    elif GPIO_M_BASE <= a < GPIO_M_END:
+        v = gpio_read("M", a - GPIO_M_BASE)
+    elif ADC0_BASE <= a < ADC0_END:
+        v = adc_read(a - ADC0_BASE)
+    elif BENCH_BASE <= a < BENCH_END:
+        v = bench_read(a - BENCH_BASE)
+    request.Value = v & 0xFFFFFFFF
+
+
+if request.IsInit:
+    tm_mode = "idle"; tm_shift = 0; tm_bits = 0; tm_frame = []; tm_addr = 0
+    tm_autoinc = True; tm_read_ptr = -1; tm_display = [0] * 16; tm_bright = 0; tm_on = 0
+    key_pressed = 0
+    gpiok_dir = 0; gpiok_den = 0; gpiok_latch = 0
+    gpiom_dir = 0; gpiom_den = 0; gpiom_latch = 0
+    gpio_misc = {}
+    prev_stb = 1; prev_clk = 1
+    adc_actss = 0; adc_ris = 0; adc_emux = 0; adc_ssmux1 = 0; adc_ssctl1 = 0; adc_pc = 7
+    adc_fifo1 = []; ch_mv = [1250, 1250]; adc_last = [0, 0]
+elif request.IsWrite:
+    dispatch_write(request)
+elif request.IsRead:
+    dispatch_read(request)
+'''
+
+// ---------------- ADC1（未使用，防误访问 stub） ----------------
 adc1: Memory.MappedMemory @ sysbus 0x40039000
     size: 0x1000
 
@@ -99,4 +377,32 @@ ssi0: Memory.MappedMemory @ sysbus 0x40008000
 timer0: Memory.MappedMemory @ sysbus 0x40030000
     size: 0x1000
 wdt0: Memory.MappedMemory @ sysbus 0x40000000
+    size: 0x1000
+
+// GPIO 端口 A-J/L-N（课程固件未用到的数字 IO）保持存储 stub
+gpioa: Memory.MappedMemory @ sysbus 0x40004000
+    size: 0x1000
+gpiob: Memory.MappedMemory @ sysbus 0x40005000
+    size: 0x1000
+gpioc: Memory.MappedMemory @ sysbus 0x40006000
+    size: 0x1000
+gpiod: Memory.MappedMemory @ sysbus 0x40007000
+    size: 0x1000
+gpioe: Memory.MappedMemory @ sysbus 0x40024000
+    size: 0x1000
+gpiof: Memory.MappedMemory @ sysbus 0x40025000
+    size: 0x1000
+gpiog: Memory.MappedMemory @ sysbus 0x40026000
+    size: 0x1000
+gpioh: Memory.MappedMemory @ sysbus 0x40027000
+    size: 0x1000
+gpioj: Memory.MappedMemory @ sysbus 0x4003D000
+    size: 0x1000
+gpiol: Memory.MappedMemory @ sysbus 0x40062000
+    size: 0x1000
+gpion: Memory.MappedMemory @ sysbus 0x40064000
+    size: 0x1000
+gpiop: Memory.MappedMemory @ sysbus 0x40065000
+    size: 0x1000
+gpioq: Memory.MappedMemory @ sysbus 0x40066000
     size: 0x1000
