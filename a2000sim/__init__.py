@@ -22,6 +22,7 @@ from .dac6571 import (  # noqa: F401
     I2CBusDecoder,
 )
 from .plant import (  # noqa: F401
+    BuckPlant,
     VREF_MV,
     ADC_MAX,
     R_SENSE_OHM,

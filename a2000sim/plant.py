@@ -76,3 +76,79 @@ class FloatingPinModel:
     @property
     def pin_mv(self) -> float:
         return self._pin_mv
+
+
+class BuckPlant:
+    """TPS40200 降压稳压源的被控对象模型（v0.3，现象学）。
+
+    忠实复现的行为（全部可在 FIL 中被课程固件"看到"）：
+    - 软启动：输出从 0 线性爬升到额定值，时长 soft_start_ms
+      [课程实验1：C8=2.2µF → 软启动 ≥30ms 的选型结论]
+    - 稳态：输出 = 额定值（电压调整率/负载调整率按理想调节处理）
+    - 负载阶跃：负载电流变化瞬间输出跌落 dip_mv（与 ΔI 成正比），
+      随后以 tau_recovery 一阶恢复到新稳态 [现象学参数，非电路仿真]
+    - 电流：I_R3 = Vout/R_load（评分口径；底板 R23 200Ω 假负载的影响
+      通过 min_load_a 参数可选计入，默认 0 以对齐评分表换算）
+
+    信号链输出：
+      pin_voltage_mv() = VOLTAGE_CHAIN.forward(vout)   （0.5 分压 → PE2 侧）
+      pin_current_mv() = CURRENT_CHAIN.forward(i)      （0.1Ω×10 → PE3 侧）
+
+    时间推进：advance(dt_s) 由 FIL 测试分窗调用（与 Renode RunFor 同步）。
+    """
+
+    def __init__(self, vout_nominal_mv: float = 5000.0,
+                 soft_start_ms: float = 30.0,
+                 load_res_ohm: float = 5.1,
+                 dip_mv_per_a: float = 120.0,
+                 tau_recovery_s: float = 0.002,
+                 min_load_a: float = 0.0):
+        self.vout_nominal_mv = vout_nominal_mv
+        self.soft_start_ms = soft_start_ms
+        self.load_res_ohm = load_res_ohm
+        self.dip_mv_per_a = dip_mv_per_a
+        self.tau_recovery_s = tau_recovery_s
+        self.min_load_a = min_load_a
+        self.t_s = 0.0
+        self._vout_mv = 0.0
+        self._dip_mv = 0.0
+        self._last_load = load_res_ohm
+
+    @property
+    def vout_mv(self) -> float:
+        return self._vout_mv
+
+    @property
+    def current_a(self) -> float:
+        """R3 采样电流 [评分口径]：I = Vout/R_load（+ 可选最小负载）。"""
+        if self.load_res_ohm <= 0:
+            return self.min_load_a
+        return self._vout_mv / 1000.0 / self.load_res_ohm + self.min_load_a
+
+    def set_load(self, res_ohm: float) -> None:
+        """负载阶跃：按 ΔI 施加输出跌落，随后 advance 中一阶恢复。"""
+        old_i = self.current_a
+        self.load_res_ohm = res_ohm
+        delta_i = abs(self.current_a - old_i)
+        self._dip_mv += self.dip_mv_per_a * delta_i
+
+    def advance(self, dt_s: float) -> None:
+        """推进 dt_s 的虚拟时间（软启动 + 负载阶跃恢复）。"""
+        import math
+        self.t_s += dt_s
+        alpha = 1.0 - math.exp(-dt_s / self.tau_recovery_s) if self.tau_recovery_s > 0 else 1.0
+        if self.t_s * 1000.0 < self.soft_start_ms:
+            # 软启动：输出直接跟随线性爬升（一阶滞后只作用于阶跃恢复）
+            self._vout_mv = max(0.0, self.vout_nominal_mv * (self.t_s * 1000.0 / self.soft_start_ms) - self._dip_mv)
+        else:
+            self._vout_mv = self._vout_mv + (self.vout_nominal_mv - self._vout_mv) * alpha
+            self._vout_mv = max(0.0, self._vout_mv - self._dip_mv)
+        self._dip_mv *= max(0.0, 1.0 - alpha)   # 跌落随同一时间常数恢复
+
+    def pin_voltage_mv(self) -> float:
+        """电压调理输出（→ PE2 侧，adc_demo 的 CH1/AIN1）。"""
+        return VOLTAGE_CHAIN.forward(self._vout_mv)
+
+    def pin_current_mv(self) -> float:
+        """电流调理输出（→ PE3 侧，adc_demo 的 CH0/AIN0）。"""
+        return CURRENT_CHAIN.forward(self.current_a)
