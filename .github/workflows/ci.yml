@@ -14,9 +14,9 @@ jobs:
         with:
           python-version: "3.11"
       - name: 安装
-        run: pip install -e .
+        run: pip install -e ".[test]"
       - name: 测试
-        run: pytest tests/ -v
+        run: python -m pytest tests/ -v
 
   renode-platform:
     name: Renode 平台语法冒烟

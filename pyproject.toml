@@ -12,6 +12,9 @@ license = { text = "MIT" }
 authors = [{ name = "a2000tm4-virtual-lab contributors" }]
 keywords = ["tm4c1294", "tm1638", "renode", "renode-simulation", "tiva-c", "firmware-in-the-loop"]
 
+[project.optional-dependencies]
+test = ["pytest>=7"]
+
 [tool.setuptools.packages.find]
 include = ["a2000sim*"]
 
