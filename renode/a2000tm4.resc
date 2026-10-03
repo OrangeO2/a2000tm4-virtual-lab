@@ -1,0 +1,53 @@
+# A2000TM4 虚拟实验台 —— Renode 机器脚本
+# 用法（从仓库根目录运行）：renode --console renode/a2000tm4.resc
+# 固件：把课程 .axf 放入 firmware/local/ 后，
+#       sysbus LoadELF @firmware/local/adc_demo.axf
+# 然后 start（或直接用 renode/tests/*.robot 自动实测）。
+
+using sysbus
+mach create "a2000tm4"
+machine LoadPlatformDescription @renode/a2000tm4.repl
+
+# ---------- 预置实测/就绪值（出处见 docs/2、docs/3） ----------
+sysbus WriteDoubleWord 0x400FE000 0x100A0002   # DID0 [M-1]
+sysbus WriteDoubleWord 0x400FE004 0x101FC06E   # DID1 [M-1]
+sysbus WriteDoubleWord 0x400FDFC0 0x000001FF   # FSIZE=1MB [M-1]
+sysbus WriteDoubleWord 0x400FDFC4 0x000003FF   # SSIZE=256KB [M-1]
+sysbus WriteDoubleWord 0x400FE168 0x00000001   # PLLSTAT.LOCK=1 → SysCtlClockFreqSet 不空等
+sysbus WriteDoubleWord 0x400FE050 0x00000100   # RIS.MOSCPUPRIS=1 → 25M 晶振“起振完成”（否则 ClockFreqSet 返回 0）
+sysbus WriteDoubleWord 0x400FEA08 0x00007FFF   # PRGPIO：15 端口全就绪 → SysCtlPeripheralReady 立即通过
+sysbus WriteDoubleWord 0x400FEA38 0x00000001   # PRADC 就绪
+
+# ---------- ADC0 电压注入 ----------
+# adc_demo 固件读 SSFIFO1 两次得 CH0/CH1；v0.1 两路同值（限制见 docs/4）。
+# $adc_code 为 12 位注入码；默认 1552 ≈ 1.25V。
+# 在命令行覆盖：renode -e "$adc_code=3102" 或在交互监视器里先设再 include
+$adc_code?=1552
+sysbus WriteDoubleWord 0x40038004 0x00000002   # RIS：序列1 恒“完成” → 固件不空等
+sysbus WriteDoubleWord 0x40038068 $adc_code    # SSFIFO1 注入码
+
+# ---------- PR 位带别名就绪位（alias=0x43FD4100+bit*4，见 .repl 注释） ----------
+# PRGPIO 端口 A..Q（bit0..14）
+sysbus WriteDoubleWord 0x43FD4100 0x1
+sysbus WriteDoubleWord 0x43FD4104 0x1
+sysbus WriteDoubleWord 0x43FD4108 0x1
+sysbus WriteDoubleWord 0x43FD410C 0x1
+sysbus WriteDoubleWord 0x43FD4110 0x1
+sysbus WriteDoubleWord 0x43FD4114 0x1
+sysbus WriteDoubleWord 0x43FD4118 0x1
+sysbus WriteDoubleWord 0x43FD411C 0x1
+sysbus WriteDoubleWord 0x43FD4120 0x1
+sysbus WriteDoubleWord 0x43FD4124 0x1          # GPIO Port K 就绪（adc_demo 依赖）
+sysbus WriteDoubleWord 0x43FD4128 0x1
+sysbus WriteDoubleWord 0x43FD412C 0x1          # GPIO Port M 就绪
+sysbus WriteDoubleWord 0x43FD4130 0x1
+sysbus WriteDoubleWord 0x43FD4134 0x1
+sysbus WriteDoubleWord 0x43FD4138 0x1
+sysbus WriteDoubleWord 0x43FD4700 0x1          # PRADC 就绪
+
+# ---------- 固件加载（若文件存在） ----------
+$bin?=@firmware/local/adc_demo.axf
+sysbus LoadELF $bin
+
+showAnalyzer uart0
+# 交互模式请手动输入 start；脚本/FIL 测试用 emulation RunFor 推进
