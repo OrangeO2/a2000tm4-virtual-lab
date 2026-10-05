@@ -77,7 +77,7 @@ class FloatingPinModel:
     模型复现见 tests/test_plant.py::test_floating_pe3_matches_probe7_bleed。
     """
 
-    def __init__(self, resting_mv: float = 1263.1, plateau_mv: float = 1156.0,
+    def __init__(self, resting_mv: float = 1263.1, plateau_mv: float = 1150.5,
                  bleed_per_sample: float = 0.32, recovery_tau_s: float = 0.15):
         self.resting_mv = resting_mv
         self.plateau_mv = plateau_mv
