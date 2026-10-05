@@ -144,7 +144,7 @@ def main():
     # ADC0 时钟（若固件未开则补开，结束后恢复）
     rc = rd32(0x400FE638)
     if rc is not None and (rc & 1) == 0:
-        mww(0x400FE638, 0x01)
+        mww(0x400FE638, rc | 0x01)
     pr = 0
     for _ in range(300):
         v = rd32(0x400FEA38)
@@ -153,6 +153,8 @@ def main():
             break
     print("PRADC ready=%d" % pr)
     am = rd32(0x40024528)
+    adc_saved = {a: rd32(a) for a in
+                 (0x40038000, 0x40038014, 0x40038060, 0x40038064, 0x40038FC4)}
     mww(0x40024528, (am or 0) | 0x0C)          # PE2/PE3 模拟模式
     for a, v in [(0x40038000, 0), (0x40038014, 0), (0x40038060, 0x10),
                  (0x40038064, 0x60), (0x40038FC4, 3), (0x4003800C, 2),
@@ -191,17 +193,20 @@ def main():
         print("  稳定性: PE3 %s / PE2 %s（σ<3 → 被驱动；σ>8 → 浮空/衰减）"
               % ("被驱动(稳)" if s3 < 3 else "浮空/衰减",
                  "被驱动(稳)" if s2 < 3 else "浮空/衰减"))
-        print("  理论链反推（0.5 分压 / 1V/A）: Vout=%.0f mV, I=%.3f A"
-              % (e3 * 3300 / 4095 * 2, e2 * 3300 / 4095 / 1000))
+        print("  理论链反推（CH1/PE2=电压0.5分压；CH0/PE3=电流1V/A）: Vout=%.0f mV, I=%.3f A"
+              % (e2 * 3300 / 4095 * 2, e3 * 3300 / 4095 / 1000))
         print("  标定提示：配合万用表 VOUT+ 读数 V 与负载 R，"
-              "vdiv_ratio = PE3_mV/V，i_gain = PE2_mV/(V/R)")
+              "vdiv_ratio = PE2_mV/V，i_gain = PE3_mV/(V/R)")
 
-    # 恢复 ADC/GPIO 状态并 resume
-    for a, v in [(0x40038000, 0), (0x40038014, 0), (0x40038060, 0), (0x40038064, 0),
-                 (0x40038FC4, 7), (0x4003800C, 0)]:
-        mww(a, v)
+    # 恢复捕获到的 ADC/GPIO 配置并 resume。ISC/RIS 属 W1C/运行态状态，无法无损复原。
+    mww(0x40038000, 0)
+    for a in (0x40038014, 0x40038060, 0x40038064, 0x40038FC4):
+        if adc_saved.get(a) is not None:
+            mww(a, adc_saved[a])
+    if adc_saved.get(0x40038000) is not None:
+        mww(0x40038000, adc_saved[0x40038000])
     mww(0x40024528, am or 0)
-    if rc is not None and (rc & 1) == 0:
+    if rc is not None:
         mww(0x400FE638, rc)
     tel.cmd("resume")
     time.sleep(0.3)
