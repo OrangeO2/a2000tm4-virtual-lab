@@ -20,13 +20,12 @@ sysbus WriteDoubleWord 0x400FE050 0x00000100   # RIS.MOSCPUPRIS=1 → 25M 晶振
 sysbus WriteDoubleWord 0x400FEA08 0x00007FFF   # PRGPIO：15 端口全就绪 → SysCtlPeripheralReady 立即通过
 sysbus WriteDoubleWord 0x400FEA38 0x00000001   # PRADC 就绪
 
-# ---------- ADC0 电压注入 ----------
-# adc_demo 固件读 SSFIFO1 两次得 CH0/CH1；v0.1 两路同值（限制见 docs/4）。
-# $adc_code 为 12 位注入码；默认 1552 ≈ 1.25V。
-# 在命令行覆盖：renode -e "$adc_code=3102" 或在交互监视器里先设再 include
-$adc_code?=1552
-sysbus WriteDoubleWord 0x40038004 0x00000002   # RIS：序列1 恒“完成” → 固件不空等
-sysbus WriteDoubleWord 0x40038068 $adc_code    # SSFIFO1 注入码
+# ---------- ADC0 激励 ----------
+# v0.2+ 的 ADC0 已由 a2000tm4.repl 中 PythonPeripheral 实现真 FIFO/RIS 子集语义，
+# 不再向 RIS/SSFIFO 写 v0.1 的静态预置值。默认无功率板基线为：
+#   CH0=PE3/AIN0=1150mV（电流链引脚），CH1=PE2/AIN1=1058mV（电压链引脚）。
+# 运行时通过 bench 控制块注入：
+#   0x50000040 = CH0/PE3 mV；0x50000044 = CH1/PE2 mV。
 
 # ---------- PR 位带别名就绪位（alias=0x43FD4100+bit*4，见 .repl 注释） ----------
 # PRGPIO 端口 A..Q（bit0..14）
