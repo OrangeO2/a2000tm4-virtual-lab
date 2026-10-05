@@ -26,11 +26,13 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 sys.path.insert(0, os.path.join(REPO, "tools"))
 
-from a2000sim.plant import BuckPlant, adc_code                     # noqa: E402
+from a2000sim.plant import (BuckPlant, CURRENT_ADC_CHANNEL,
+                            VOLTAGE_ADC_CHANNEL, adc_code)          # noqa: E402
 from a2000sim.scoring import (score_abs_voltage, score_line_regulation,  # noqa: E402
                               score_load_regulation, score_monitor_current,
                               score_monitor_voltage, score_protection)
-from fil_smoke import FW_ADC, find_renode, readbacks, run_renode   # noqa: E402
+from fil_smoke import (FW_ADC, bench_adc_mv_addr, find_renode,
+                       readbacks, run_renode)                        # noqa: E402
 
 LINE_REG_PPM = 50.0     # 线调整率设计值（0.005%/V → 10V 摆幅 ΔV≈2.5mV）
 OCP_TRIP_A = 1.5        # 过流触发电流（课程允许窗 1.1~1.9A 的中点）
@@ -54,9 +56,11 @@ def fil_monitoring(renode):
         if load:
             plant.set_load(load)
         v_pin, i_pin = plant.pin_voltage_mv(), plant.pin_current_mv()
-        # 物理映射：CH0/PE3=A​IN0=电流；CH1/PE2=A​IN1=电压。
-        cmds.append("sysbus WriteDoubleWord 0x50000040 %d" % round(i_pin))
-        cmds.append("sysbus WriteDoubleWord 0x50000044 %d" % round(v_pin))
+        # 物理映射：CH0/PE3/AIN0=电流；CH1/PE2/AIN1=电压。
+        cmds.append("sysbus WriteDoubleWord 0x%X %d" %
+                    (bench_adc_mv_addr(CURRENT_ADC_CHANNEL), round(i_pin)))
+        cmds.append("sysbus WriteDoubleWord 0x%X %d" %
+                    (bench_adc_mv_addr(VOLTAGE_ADC_CHANNEL), round(v_pin)))
         cmds.append('emulation RunFor "00:00:%04.2f"' % max(2.0, dur * 10))
         for i in range(8):
             cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
@@ -81,6 +85,7 @@ def fil_monitoring(renode):
 def main():
     model_checks = []
     fil_card = []
+    fil_failed = False
     print("=" * 72)
     print("  课程验收预演（证据分级版）— 第一阶段 DC-DC 稳压电源 + 监测链")
     print("  A=模型一致性检查（不计真实验收分）；B=FIL 合成激励（仅验证固件链路）")
@@ -151,6 +156,7 @@ def main():
     else:
         results = fil_monitoring(renode)
         if results is None:
+            fil_failed = True
             print("  FAIL：FIL 回读数量不足")
         else:
             for name, v_true, v_disp, i_true, i_disp in results:
@@ -162,6 +168,8 @@ def main():
                 fil_card.append(("监测电流@%s" % name, 5, ei,
                                  "合成真值 %.3fA / 固件显示折算 %.4fA" %
                                  (i_true, i_disp)))
+                if ev < 5 or ei < 5:
+                    fil_failed = True
                 print("  %s 电压@%s: 误差 %.1fmV → 阈值分 %d/5" %
                       ("PASS" if ev == 5 else "CHECK", name, abs(v_disp - v_true), ev))
                 print("  %s 电流@%s: 误差 %.1fmA → 阈值分 %d/5" %
@@ -178,7 +186,7 @@ def main():
     print("  模型检查通过：%d/%d；它们是回归检查，不计验收得分" %
           (sum(1 for _, ok, _ in model_checks if ok), len(model_checks)))
     print("-" * 72)
-    return 0 if all(ok for _, ok, _ in model_checks) else 1
+    return 0 if all(ok for _, ok, _ in model_checks) and not fil_failed else 1
 
 
 if __name__ == "__main__":
