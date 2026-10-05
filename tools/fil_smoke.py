@@ -25,7 +25,14 @@ import sys
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, REPO)
 
-from a2000sim.plant import BuckPlant, adc_code  # noqa: E402
+from a2000sim.plant import (BuckPlant, CURRENT_ADC_CHANNEL, VOLTAGE_ADC_CHANNEL,
+                            adc_code)  # noqa: E402
+
+BENCH_ADC_MV_BASE = 0x50000040
+
+
+def bench_adc_mv_addr(channel):
+    return BENCH_ADC_MV_BASE + 4 * channel
 
 def _which(name):
     from shutil import which
@@ -90,8 +97,8 @@ def main():
         cmds = [
             "$bin=@%s" % FW_ADC,
             "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
-            "sysbus WriteDoubleWord 0x50000040 1250",
-            "sysbus WriteDoubleWord 0x50000044 1250",
+            "sysbus WriteDoubleWord 0x%X 1250" % bench_adc_mv_addr(CURRENT_ADC_CHANNEL),
+            "sysbus WriteDoubleWord 0x%X 1250" % bench_adc_mv_addr(VOLTAGE_ADC_CHANNEL),
             'emulation RunFor "00:00:02"',
         ]
         for i in range(8):
@@ -145,8 +152,8 @@ def main():
         cmds = [
             "$bin=@%s" % FW_ADC,
             "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
-            "sysbus WriteDoubleWord 0x50000040 0",  # CH0/PE3 = current
-            "sysbus WriteDoubleWord 0x50000044 0",  # CH1/PE2 = voltage
+            "sysbus WriteDoubleWord 0x%X 0" % bench_adc_mv_addr(CURRENT_ADC_CHANNEL),
+            "sysbus WriteDoubleWord 0x%X 0" % bench_adc_mv_addr(VOLTAGE_ADC_CHANNEL),
             'emulation RunFor "00:00:01"',
         ]
         states = []  # (name, voltage_code_on_CH1, current_code_on_CH0)
@@ -157,8 +164,10 @@ def main():
                 plant.set_load(load)
             v_pin = plant.pin_voltage_mv()
             i_pin = plant.pin_current_mv()
-            cmds.append("sysbus WriteDoubleWord 0x50000040 %d" % int(round(i_pin)))
-            cmds.append("sysbus WriteDoubleWord 0x50000044 %d" % int(round(v_pin)))
+            cmds.append("sysbus WriteDoubleWord 0x%X %d" %
+                        (bench_adc_mv_addr(CURRENT_ADC_CHANNEL), int(round(i_pin))))
+            cmds.append("sysbus WriteDoubleWord 0x%X %d" %
+                        (bench_adc_mv_addr(VOLTAGE_ADC_CHANNEL), int(round(v_pin))))
             cmds.append('emulation RunFor "00:00:%04.2f"' % max(2.0, dt_s * 20))
             for i in range(8):
                 cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
