@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """probe v7: confirmed-halt GPIO write adjudication + proper ADC methodology."""
-import socket, time, traceback
+import os, socket, time, traceback
 
-OUT = open(r"C:\Users\42400\tools\tm4c_probe\probe7_result.txt", "w", encoding="utf-8")
+RESULT_DIR = os.environ.get("HWPROBE_OUT_DIR", os.path.join(os.path.dirname(__file__), "results"))
+os.makedirs(RESULT_DIR, exist_ok=True)
+OUT = open(os.path.join(RESULT_DIR, "probe7_result.txt"), "w", encoding="utf-8")
 def p(*a):
     line = " ".join(str(x) for x in a)
     print(line); OUT.write(line + "\n"); OUT.flush()
