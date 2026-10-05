@@ -5,15 +5,16 @@
 
 1. adc_demo：注入 CH0=CH1=1250mV → ADC 码 1551 → GRID1-8 显示 "1551"
 2. demo   ：注入键 3 → key_code=3；键 7 → 7；释放 → 0
-3. v0.3 被控对象闭环：BuckPlant（软启动→稳态→负载阶跃）分窗推进，
-   逐窗同步注入 CH0/CH1 电压，固件显示逐窗跟随，按课程满分档断言
+3. v0.3 被控对象闭环：按物理映射 CH0=电流、CH1=电压分窗注入
+4. v0.4 DAC6571：验证完整 10 位 DAC 码，不再只检查低 8 位
+5. [M-5] 无功率板连续采样尾点基线回放（CH0=1427 / CH1=1313）
 
 用法（需 Renode 可执行文件与 firmware/local/ 下的课程固件，见 NOTICE.md）：
 
     python tools/fil_smoke.py                     # 自动探测 Renode
     RENODE_EXE=/path/renode python tools/fil_smoke.py
 
-固件缺失时打印 SKIP 并以退出码 0 结束（CI 友好）。
+各场景按所需固件独立执行；缺失项明确计为 SKIP，不再把跳过场景报告成“5/5 通过”。
 """
 
 import os
@@ -75,165 +76,205 @@ def main():
     if not renode:
         print("SKIP: 未找到 Renode 可执行文件（设置 RENODE_EXE）")
         return 0
-    if not (os.path.isfile(FW_ADC) and os.path.isfile(FW_DEMO)):
-        print("SKIP: firmware/local/ 缺少课程固件（adc_demo.axf / demo.axf）")
-        return 0
 
     failures = []
+    skipped = []
+    executed = 0
+    passed = 0
 
     # ---- 测试 1：adc_demo 电压注入 → 显示 "1551" ----
-    cmds = [
-        "$bin=@%s" % FW_ADC,
-        "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
-        "sysbus WriteDoubleWord 0x50000040 1250",
-        "sysbus WriteDoubleWord 0x50000044 1250",
-        'emulation RunFor "00:00:02"',
-    ]
-    for i in range(8):
-        cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
-    out = run_renode(renode, cmds)
-    vals = readbacks(out)
-    digits = vals[:8]
-    expect = [1, 5, 5, 1, 1, 5, 5, 1]           # CH0=CH1=码1551
-    if digits == expect:
-        print("PASS adc_demo 显示 = %s（码 1551）" % digits)
+    if not os.path.isfile(FW_ADC):
+        skipped.append("测试1 adc_demo：缺少 firmware/local/adc_demo.axf")
     else:
-        failures.append("adc_demo 显示 = %s，期望 %s" % (digits, expect))
-
-    # ---- 测试 2：demo 键注入 → key_code 跟随 ----
-    kc_addr = "0x20000019"
-    cmds = [
-        "$bin=@%s" % FW_DEMO,
-        "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
-        'emulation RunFor "00:00:01"',
-        "sysbus ReadByte %s" % kc_addr,
-        "sysbus WriteDoubleWord 0x50000000 3",
-        'emulation RunFor "00:00:00.3"',
-        "sysbus ReadByte %s" % kc_addr,
-        "sysbus WriteDoubleWord 0x50000000 7",
-        'emulation RunFor "00:00:00.3"',
-        "sysbus ReadByte %s" % kc_addr,
-        "sysbus WriteDoubleWord 0x50000000 0",
-        'emulation RunFor "00:00:00.3"',
-        "sysbus ReadByte %s" % kc_addr,
-    ]
-    out = run_renode(renode, cmds)
-    vals = readbacks(out)
-    seq = vals[:4]
-    expect_seq = [0, 3, 7, 0]
-    if seq == expect_seq:
-        print("PASS demo 键注入 key_code 序列 = %s" % seq)
-    else:
-        failures.append("demo key_code = %s，期望 %s" % (seq, expect_seq))
-
-    # ---- 测试 3：v0.3 被控对象闭环（BuckPlant 分窗推进） ----
-    # 时间线（全局虚拟时钟，含固件"追赶"裕量）：1s 引导（显示 300ms 后初始化）
-    # → 软启动中点（soft_start=1.6s，t=0.5s 处 vout≈1562mV）→ 稳态 5V/5.1Ω
-    # → 负载阶跃 10Ω（I=0.5A）。四个确定状态逐一断言（确定性模型，精确相等）。
-    # 通道映射 [课程 PPT]：CH0(PE3)=电压（GRID5-8 左侧），CH1(PE2)=电流（GRID1-4 右侧）。
-    # 注意：Python 外设处理较慢，固件在全局虚拟时间上"欠账"，故每步用 10 倍以上
-    # RunFor 裕量让固件追平后再读回。
-    plant = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=1600.0, load_res_ohm=5.1)
-    cmds = [
-        "$bin=@%s" % FW_ADC,
-        "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
-        "sysbus WriteDoubleWord 0x50000040 0",
-        "sysbus WriteDoubleWord 0x50000044 0",
-        'emulation RunFor "00:00:01"',              # 引导 + 显示初始化（激励 0V）
-    ]
-    states = []                                     # (名称, CH0电压码, CH1电流码)
-
-    def step_to(name, dt_s, load=None):
-        plant.advance(dt_s)
-        if load:
-            plant.set_load(load)
-        v_pin, i_pin = plant.pin_voltage_mv(), plant.pin_current_mv()
-        cmds.append("sysbus WriteDoubleWord 0x50000040 %d" % int(round(v_pin)))
-        cmds.append("sysbus WriteDoubleWord 0x50000044 %d" % int(round(i_pin)))
-        cmds.append('emulation RunFor "00:00:%04.2f"' % max(2.0, dt_s * 20))
+        executed += 1
+        cmds = [
+            "$bin=@%s" % FW_ADC,
+            "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
+            "sysbus WriteDoubleWord 0x50000040 1250",
+            "sysbus WriteDoubleWord 0x50000044 1250",
+            'emulation RunFor "00:00:02"',
+        ]
         for i in range(8):
             cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
-        states.append((name, adc_code(int(round(v_pin))), adc_code(int(round(i_pin)))))
+        vals = readbacks(run_renode(renode, cmds))
+        digits = vals[:8]
+        expect = [1, 5, 5, 1, 1, 5, 5, 1]
+        if digits == expect:
+            passed += 1
+            print("PASS [1] adc_demo 显示 = %s（CH0=CH1=1250mV → 码1551）" % digits)
+        else:
+            failures.append("[1] adc_demo 显示 = %s，期望 %s" % (digits, expect))
 
-    step_to("软启动中点(t=0.5s/1.6s)", 0.5)
-    step_to("稳态(5V/5.1Ω)", 1.5)
-    step_to("负载阶跃(10Ω, I=0.5A)", 0.5, load=10)
-    step_to("阶跃后稳态", 0.5)
-
-    out = run_renode(renode, cmds)
-    vals = readbacks(out)
-    if len(vals) < 4 * 8:
-        failures.append("场景 3 回读数量不足：got %d" % len(vals))
+    # ---- 测试 2：demo 键注入 → key_code 跟随 ----
+    if not os.path.isfile(FW_DEMO):
+        skipped.append("测试2 demo：缺少 firmware/local/demo.axf")
     else:
-        for k in range(4):
-            name, want_v, want_i = states[k]
-            d = vals[k * 8:(k + 1) * 8]
-            ch1_disp = d[0] * 1000 + d[1] * 100 + d[2] * 10 + d[3]   # GRID1-4 电流
-            ch0_disp = d[4] * 1000 + d[5] * 100 + d[6] * 10 + d[7]   # GRID5-8 电压
-            if (ch0_disp, ch1_disp) == (want_v, want_i):
-                print("PASS [%s]: 电压=%4d 电流=%4d" % (name, ch0_disp, ch1_disp))
-            else:
-                failures.append("[%s]: 电压=%d(期望%d) 电流=%d(期望%d)"
-                                % (name, ch0_disp, want_v, ch1_disp, want_i))
+        executed += 1
+        kc_addr = "0x20000019"
+        cmds = [
+            "$bin=@%s" % FW_DEMO,
+            "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
+            'emulation RunFor "00:00:01"',
+            "sysbus ReadByte %s" % kc_addr,
+            "sysbus WriteDoubleWord 0x50000000 3",
+            'emulation RunFor "00:00:00.3"',
+            "sysbus ReadByte %s" % kc_addr,
+            "sysbus WriteDoubleWord 0x50000000 7",
+            'emulation RunFor "00:00:00.3"',
+            "sysbus ReadByte %s" % kc_addr,
+            "sysbus WriteDoubleWord 0x50000000 0",
+            'emulation RunFor "00:00:00.3"',
+            "sysbus ReadByte %s" % kc_addr,
+        ]
+        seq = readbacks(run_renode(renode, cmds))[:4]
+        expect_seq = [0, 3, 7, 0]
+        if seq == expect_seq:
+            passed += 1
+            print("PASS [2] demo 键注入 key_code 序列 = %s" % seq)
+        else:
+            failures.append("[2] demo key_code = %s，期望 %s" % (seq, expect_seq))
 
-    # ---- 测试 4：v0.4 DAC6571 I2C 闭环（dac_demo） ----
-    # 全链路：键注入 → 固件消抖/码调整 → 软件 I2C 位拍（PL0/PL1）→
-    # 虚拟 DAC6571 解码（START/STOP/位锁存/ACK 跳过/地址 0x98 过滤）→ 回读。
-    # 课程 dac_demo：开机码 1023；键 4=−100、键 1=+100（写帧确认）。
+    # ---- 测试 3：v0.3 被控对象闭环（BuckPlant 分窗推进） ----
+    # 物理映射统一为：CH0=PE3/AIN0=电流；CH1=PE2/AIN1=电压。
+    # 固件显示：GRID1-4=CH1（电压），GRID5-8=CH0（电流）。
+    if not os.path.isfile(FW_ADC):
+        skipped.append("测试3 BuckPlant FIL：缺少 firmware/local/adc_demo.axf")
+    else:
+        executed += 1
+        plant = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=1600.0, load_res_ohm=5.1)
+        cmds = [
+            "$bin=@%s" % FW_ADC,
+            "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
+            "sysbus WriteDoubleWord 0x50000040 0",  # CH0/PE3 = current
+            "sysbus WriteDoubleWord 0x50000044 0",  # CH1/PE2 = voltage
+            'emulation RunFor "00:00:01"',
+        ]
+        states = []  # (name, voltage_code_on_CH1, current_code_on_CH0)
+
+        def step_to(name, dt_s, load=None):
+            plant.advance(dt_s)
+            if load is not None:
+                plant.set_load(load)
+            v_pin = plant.pin_voltage_mv()
+            i_pin = plant.pin_current_mv()
+            cmds.append("sysbus WriteDoubleWord 0x50000040 %d" % int(round(i_pin)))
+            cmds.append("sysbus WriteDoubleWord 0x50000044 %d" % int(round(v_pin)))
+            cmds.append('emulation RunFor "00:00:%04.2f"' % max(2.0, dt_s * 20))
+            for i in range(8):
+                cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
+            states.append((name, adc_code(int(round(v_pin))), adc_code(int(round(i_pin)))))
+
+        step_to("软启动中点(t=0.5s/1.6s)", 0.5)
+        step_to("稳态(5V/5.1Ω)", 1.5)
+        step_to("负载阶跃(10Ω, I=0.5A)", 0.5, load=10)
+        step_to("阶跃后稳态", 0.5)
+
+        vals = readbacks(run_renode(renode, cmds))
+        ok = len(vals) >= 4 * 8
+        if not ok:
+            failures.append("[3] 场景回读数量不足：got %d" % len(vals))
+        else:
+            local_failures = []
+            for k, (name, want_v, want_i) in enumerate(states):
+                d = vals[k * 8:(k + 1) * 8]
+                voltage_disp = d[0] * 1000 + d[1] * 100 + d[2] * 10 + d[3]
+                current_disp = d[4] * 1000 + d[5] * 100 + d[6] * 10 + d[7]
+                if (voltage_disp, current_disp) == (want_v, want_i):
+                    print("PASS [3:%s]: 电压=%4d 电流=%4d" % (name, voltage_disp, current_disp))
+                else:
+                    local_failures.append(
+                        "[3:%s]: 电压=%d(期望%d) 电流=%d(期望%d)"
+                        % (name, voltage_disp, want_v, current_disp, want_i)
+                    )
+            if local_failures:
+                failures.extend(local_failures)
+            else:
+                passed += 1
+
+    # ---- 测试 4：v0.4 DAC6571 I2C 闭环（完整 10 位 DAC 码） ----
     FW_DAC = os.path.join(REPO, "firmware", "local", "dac_demo.axf")
     if not os.path.isfile(FW_DAC):
-        print("SKIP 测试 4：firmware/local/dac_demo.axf 不存在")
+        skipped.append("测试4 DAC6571：缺少 firmware/local/dac_demo.axf")
     else:
+        executed += 1
         cmds = [
             "$bin=@%s" % FW_DAC,
             "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
             'emulation RunFor "00:00:02"',
-            "sysbus ReadByte 0x50000050",               # DAC 码低字节（期望 1023→0xFF）
-            "sysbus ReadByte 0x50000058",               # I2C 帧数（期望 ≥1）
-            "sysbus ReadByte 0x50000010",               # GRID1
-            "sysbus ReadByte 0x50000011",
-            "sysbus ReadByte 0x50000012",
-            "sysbus ReadByte 0x50000013",               # GRID1-4 = "1023"
-            "sysbus WriteDoubleWord 0x50000000 4",      # 键 4 按下（−100）
-            'emulation RunFor "00:00:00.5"',
-            "sysbus WriteDoubleWord 0x50000000 0",      # 释放
-            'emulation RunFor "00:00:00.5"',
-            "sysbus ReadByte 0x50000050",               # 期望 923→0x9B
+            "sysbus ReadDoubleWord 0x50000050",
+            "sysbus ReadDoubleWord 0x50000058",
             "sysbus ReadByte 0x50000010",
             "sysbus ReadByte 0x50000011",
             "sysbus ReadByte 0x50000012",
-            "sysbus ReadByte 0x50000013",               # GRID1-4 = "0923"
-            "sysbus WriteDoubleWord 0x50000000 1",      # 键 1 按下（+100）
+            "sysbus ReadByte 0x50000013",
+            "sysbus WriteDoubleWord 0x50000000 4",
             'emulation RunFor "00:00:00.5"',
             "sysbus WriteDoubleWord 0x50000000 0",
             'emulation RunFor "00:00:00.5"',
-            "sysbus ReadByte 0x50000050",               # 期望回到 1023→0xFF
-            "sysbus ReadByte 0x50000058",               # 帧数 ≥3
+            "sysbus ReadDoubleWord 0x50000050",
+            "sysbus ReadByte 0x50000010",
+            "sysbus ReadByte 0x50000011",
+            "sysbus ReadByte 0x50000012",
+            "sysbus ReadByte 0x50000013",
+            "sysbus WriteDoubleWord 0x50000000 1",
+            'emulation RunFor "00:00:00.5"',
+            "sysbus WriteDoubleWord 0x50000000 0",
+            'emulation RunFor "00:00:00.5"',
+            "sysbus ReadDoubleWord 0x50000050",
+            "sysbus ReadDoubleWord 0x50000058",
         ]
-        out = run_renode(renode, cmds)
-        vals = readbacks(out)
+        vals = readbacks(run_renode(renode, cmds))
         if len(vals) < 13:
-            failures.append("场景 4 回读数量不足：got %d" % len(vals))
+            failures.append("[4] DAC 闭环回读数量不足：got %d" % len(vals))
         else:
             dac0, frames0 = vals[0], vals[1]
             grid0 = vals[2:6]
             dac1, grid1 = vals[6], vals[7:11]
             dac2, frames2 = vals[11], vals[12]
-            ok_boot = (dac0 & 0xFF) == 0xFF and grid0 == [1, 0, 2, 3]
-            ok_dec = (dac1 & 0xFF) == 0x9B and grid1 == [0, 9, 2, 3]
-            ok_back = (dac2 & 0xFF) == 0xFF and frames2 >= 3
+            ok_boot = dac0 == 1023 and grid0 == [1, 0, 2, 3]
+            ok_dec = dac1 == 923 and grid1 == [0, 9, 2, 3]
+            ok_back = dac2 == 1023 and frames2 >= 3 and frames2 >= frames0
             if ok_boot and ok_dec and ok_back:
-                print("PASS [DAC闭环]: 开机码 1023 → 键4 −100 → 923 → 键1 +100 → 1023，"
-                      "I2C 帧=%d 全部解码" % frames2)
+                passed += 1
+                print("PASS [4] DAC闭环：1023 → 923 → 1023，I2C 帧=%d" % frames2)
             else:
-                failures.append("[DAC闭环]: boot=%s/%s dec=%s/%s back=%s/%s 帧=%s"
-                                % (hex(dac0), grid0, hex(dac1), grid1,
-                                   hex(dac2), frames2, frames0))
+                failures.append(
+                    "[4] DAC闭环: boot=%s/%s dec=%s/%s back=%s frames=%s/%s"
+                    % (dac0, grid0, dac1, grid1, dac2, frames0, frames2)
+                )
+
+    # ---- 测试 5：M-5 无功率板连续采样尾点基线 ----
+    # bench 默认 CH0/PE3=1150mV、CH1/PE2=1058mV，对应 1427/1313 码。
+    if not os.path.isfile(FW_ADC):
+        skipped.append("测试5 实板基线回放：缺少 firmware/local/adc_demo.axf")
+    else:
+        executed += 1
+        cmds = [
+            "$bin=@%s" % FW_ADC,
+            "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
+            'emulation RunFor "00:00:02"',
+        ]
+        for i in range(8):
+            cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
+        digits = readbacks(run_renode(renode, cmds))[:8]
+        expect = [1, 3, 1, 3, 1, 4, 2, 7]  # GRID1-4=CH1=1313; GRID5-8=CH0=1427
+        if digits == expect:
+            passed += 1
+            print("PASS [5] M-5 基线回放：CH1=1313 / CH0=1427")
+        else:
+            failures.append("[5] 基线显示=%s，期望=%s" % (digits, expect))
+
+    for item in skipped:
+        print("SKIP:", item)
     if failures:
-        for f in failures:
-            print("FAIL:", f)
+        for item in failures:
+            print("FAIL:", item)
+        print("FIL SMOKE: %d/%d 已执行场景通过；%d 跳过；%d 失败" %
+              (passed, executed, len(skipped), len(failures)))
         return 1
-    print("FIL SMOKE: 5/5 通过")
+
+    print("FIL SMOKE: %d/%d 已执行场景通过；%d 跳过" %
+          (passed, executed, len(skipped)))
     return 0
 
 
