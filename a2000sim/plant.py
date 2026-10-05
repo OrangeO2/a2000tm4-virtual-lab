@@ -118,13 +118,27 @@ class BuckPlant:
                  load_res_ohm: float = 5.1,
                  dip_mv_per_a: float = 120.0,
                  tau_recovery_s: float = 0.002,
-                 min_load_a: float = 0.0):
+                 min_load_a: float = 0.0,
+                 vin_mv: float = 10000.0,
+                 line_reg_ppm_per_v: float = 0.0,
+                 ocp_trip_a: float = 1.5,
+                 ocp_hiccup_s: float = 0.1,
+                 ocp_enabled: bool = True):
         self.vout_nominal_mv = vout_nominal_mv
         self.soft_start_ms = soft_start_ms
         self.load_res_ohm = load_res_ohm
         self.dip_mv_per_a = dip_mv_per_a
         self.tau_recovery_s = tau_recovery_s
         self.min_load_a = min_load_a
+        # 线调整率 [现象学]：Vin 偏离 15V 中点每 1V 输出漂移 ppm×1e-6（0=理想调节）
+        self.vin_mv = vin_mv
+        self.line_reg_ppm_per_v = line_reg_ppm_per_v
+        # 过流保护 [课程任务：触发允许范围 1.1~1.9A；评分：关断 5 分+恢复 5 分]
+        self.ocp_trip_a = ocp_trip_a
+        self.ocp_hiccup_s = ocp_hiccup_s
+        self.ocp_enabled = ocp_enabled
+        self._tripped = False
+        self._trip_t = -1e9
         self.t_s = 0.0
         self._vout_mv = 0.0
         self._dip_mv = 0.0
@@ -133,6 +147,11 @@ class BuckPlant:
     @property
     def vout_mv(self) -> float:
         return self._vout_mv
+
+    def _nominal_mv(self) -> float:
+        """额定输出（含线调整率：Vin 偏离 15V 中点每伏漂移 ppm×1e-6）。"""
+        factor = 1.0 + self.line_reg_ppm_per_v * 1e-6 * (self.vin_mv - 15000.0) / 1000.0
+        return self.vout_nominal_mv * factor
 
     @property
     def current_a(self) -> float:
@@ -149,17 +168,37 @@ class BuckPlant:
         self._dip_mv += self.dip_mv_per_a * delta_i
 
     def advance(self, dt_s: float) -> None:
-        """推进 dt_s 的虚拟时间（软启动 + 负载阶跃恢复）。"""
+        """推进 dt_s 的虚拟时间（软启动 + 负载阶跃恢复 + 过流保护打嗝）。"""
         import math
         self.t_s += dt_s
+        nominal = self._nominal_mv()
+
+        # 过流保护判定（以额定输出下的负载电流为准）[课程任务 1.1~1.9A]
+        i_nom = (nominal / 1000.0) / self.load_res_ohm if self.load_res_ohm > 0 else self.min_load_a
+        if self.ocp_enabled and not self._tripped and i_nom > self.ocp_trip_a:
+            self._tripped = True
+            self._trip_t = self.t_s
+        if self._tripped and self.t_s - self._trip_t >= self.ocp_hiccup_s and i_nom <= self.ocp_trip_a:
+            self._tripped = False                       # 负载已回到安全范围 → 自动恢复
+
+        if self._tripped:
+            # 关断：输出快速衰减到 0（打嗝间隔后按上文条件重试）
+            self._vout_mv = max(0.0, self._vout_mv - 2.0e6 * dt_s)   # ≈ I/C：2A 进 940µF
+            self._dip_mv = 0.0
+            return
+
         alpha = 1.0 - math.exp(-dt_s / self.tau_recovery_s) if self.tau_recovery_s > 0 else 1.0
         if self.t_s * 1000.0 < self.soft_start_ms:
             # 软启动：输出直接跟随线性爬升（一阶滞后只作用于阶跃恢复）
-            self._vout_mv = max(0.0, self.vout_nominal_mv * (self.t_s * 1000.0 / self.soft_start_ms) - self._dip_mv)
+            self._vout_mv = max(0.0, nominal * (self.t_s * 1000.0 / self.soft_start_ms) - self._dip_mv)
         else:
-            self._vout_mv = self._vout_mv + (self.vout_nominal_mv - self._vout_mv) * alpha
+            self._vout_mv = self._vout_mv + (nominal - self._vout_mv) * alpha
             self._vout_mv = max(0.0, self._vout_mv - self._dip_mv)
         self._dip_mv *= max(0.0, 1.0 - alpha)   # 跌落随同一时间常数恢复
+
+    @property
+    def tripped(self) -> bool:
+        return self._tripped
 
     def pin_voltage_mv(self) -> float:
         """电压调理输出（→ PE2 侧，adc_demo 的 CH1/AIN1）。"""

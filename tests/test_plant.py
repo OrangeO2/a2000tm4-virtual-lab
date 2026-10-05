@@ -143,3 +143,57 @@ def test_buck_scenario_schedule_for_fil():
     v_last, i_last = schedule[-1]                      # 负载 10Ω 后
     assert abs(v_last - 3102) <= 12
     assert abs(i_last - adc_code(0.5 * 1000.0)) <= 12  # I=0.5A
+
+
+# ---------------- v0.4+：线调整率与过流保护（评分项仿真） ----------------
+
+def test_buck_line_regulation_meets_course_criterion():
+    """[评分表] 电压调整率：Vin 10→20V，ΔV <10mV 得 5 分（线调整率 50ppm/V）。"""
+    from a2000sim.scoring import score_line_regulation
+    p10 = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0,
+                    load_res_ohm=5.1, vin_mv=10000.0, line_reg_ppm_per_v=50.0)
+    p20 = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0,
+                    load_res_ohm=5.1, vin_mv=20000.0, line_reg_ppm_per_v=50.0)
+    for p in (p10, p20):
+        p.advance(0.05)
+    dv = abs(p20.vout_mv - p10.vout_mv)
+    assert dv == pytest.approx(2.5, abs=0.2)     # 50ppm/V × 10V × 5000mV
+    assert score_line_regulation(dv) == 5
+
+
+def test_buck_overcurrent_protection_and_recovery():
+    """[评分表] 过流保护和恢复：有效关断 5 分 + 自动恢复 5 分。
+
+    场景：5.1Ω 正常 → 并联 2.5Ω（I=2A > 触发 1.5A）→ 关断（打嗝重试仍过流保持）
+    → 负载回到 5.1Ω → 自动恢复 5V。
+    """
+    plant = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0,
+                      load_res_ohm=5.1, ocp_trip_a=1.5, ocp_hiccup_s=0.05)
+    plant.advance(0.05)
+    assert not plant.tripped
+    assert plant.current_a == pytest.approx(0.98, rel=0.01)
+
+    plant.set_load(2.5)                          # I = 2A > 1.5A
+    plant.advance(0.01)                          # 打嗝周期内：输出快速衰减
+    assert plant.tripped
+    assert plant.vout_mv < 200                   # 有效关断（评分第一档）
+    plant.advance(0.05)                          # 打嗝重试仍过流 → 保持关断
+    assert plant.tripped and plant.vout_mv == 0
+
+    plant.set_load(5.1)                          # 负载恢复正常
+    plant.advance(0.01)
+    assert not plant.tripped                     # 自动恢复
+    plant.advance(0.05)
+    assert plant.vout_mv == pytest.approx(5000.0, rel=0.01)
+    from a2000sim.scoring import score_protection
+    assert score_protection(plant.tripped is False, True) == 10
+
+
+def test_buck_overcurrent_trip_within_course_window():
+    """[课程任务] 触发电流允许范围 1.1~1.9A：1.5A 触发值应在窗内；1.0A 不触发。"""
+    p = BuckPlant(load_res_ohm=5.0, ocp_trip_a=1.5)
+    p.advance(0.05)
+    assert not p.tripped                          # 1.0A < 1.5A
+    p.set_load(3.0)                               # I = 1.67A ∈ [1.1, 1.9]
+    p.advance(0.01)
+    assert p.tripped                              # 触发且在允许窗内
