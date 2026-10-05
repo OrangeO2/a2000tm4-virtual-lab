@@ -2,16 +2,15 @@
 # -*- coding: utf-8 -*-
 """课程验收预演（仿真版）——第一阶段 DC-DC 稳压电源 + 单片机监测链。
 
-按《工程实践与科技创新[3A]测试方法和评分规则》（2025-11-25 版）表 2 逐项预演：
+按《工程实践与科技创新[3A]测试方法和评分规则》（2025-11-25 版）表 2 做两类检查：
 
-  仿真可验（本脚本打分）：
-    - 单片机监测电压/电流（10 分）——FIL：课程固件 adc_demo + 虚拟实验台
-    - 输出电压绝对精度（10 分）——被控对象模型（空载/5.1Ω）
-    - 负载调整率（5 分）/ 电压调整率（5 分）——被控对象模型
-    - 过流保护和恢复（10 分）——被控对象模型（打嗝现象学）
-  需实机（输出 N/A，不计分）：
-    - 输出纹波（20 分）——准静态模型无开关纹波
-    - 电源转换效率（40 分）——模型无损耗
+  A. 模型一致性检查（不计真实验收分）：
+    - 输出电压、负载/电压调整率、过流关断/恢复
+    - 这些结果由 BuckPlant 的设定参数决定，只能证明模型与评分函数自洽
+  B. FIL 合成激励检查（可按评分阈值评价固件链路，但不代表实板得分）：
+    - 课程固件 adc_demo + 虚拟实验台，验证 ADC→固件→显示处理链
+
+  真实硬件验收仍需实机测量；纹波、效率以及功率级静态指标均不由本脚本宣称通过。
 
 用法：
     python tools/acceptance_rehearsal.py
@@ -55,8 +54,9 @@ def fil_monitoring(renode):
         if load:
             plant.set_load(load)
         v_pin, i_pin = plant.pin_voltage_mv(), plant.pin_current_mv()
-        cmds.append("sysbus WriteDoubleWord 0x50000040 %d" % round(v_pin))
-        cmds.append("sysbus WriteDoubleWord 0x50000044 %d" % round(i_pin))
+        # 物理映射：CH0/PE3=A​IN0=电流；CH1/PE2=A​IN1=电压。
+        cmds.append("sysbus WriteDoubleWord 0x50000040 %d" % round(i_pin))
+        cmds.append("sysbus WriteDoubleWord 0x50000044 %d" % round(v_pin))
         cmds.append('emulation RunFor "00:00:%04.2f"' % max(2.0, dur * 10))
         for i in range(8):
             cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
@@ -69,73 +69,80 @@ def fil_monitoring(renode):
     results = []
     for k, (name, v_true, i_true) in enumerate(phases):
         d = vals[k * 8:(k + 1) * 8]
-        ch1_disp = d[0] * 1000 + d[1] * 100 + d[2] * 10 + d[3]   # GRID1-4 电流码
-        ch0_disp = d[4] * 1000 + d[5] * 100 + d[6] * 10 + d[7]   # GRID5-8 电压码
-        # 标定链反演（等效实机固件的标定步骤）：码 → 引脚 mV → 工程量
-        v_disp = ch0_disp * 3300.0 / 4095.0 * 2.0               # 除以 0.5 分压
-        i_disp = ch1_disp * 3300.0 / 4095.0 / 1000.0            # 1V/A
+        ch1_disp = d[0] * 1000 + d[1] * 100 + d[2] * 10 + d[3]   # GRID1-4 = CH1/PE2 电压码
+        ch0_disp = d[4] * 1000 + d[5] * 100 + d[6] * 10 + d[7]   # GRID5-8 = CH0/PE3 电流码
+        # 标定链反演（合成理想链）：码 → 引脚 mV → 工程量
+        v_disp = ch1_disp * 3300.0 / 4095.0 * 2.0               # 电压链 0.5 分压
+        i_disp = ch0_disp * 3300.0 / 4095.0 / 1000.0            # 电流链 1V/A
         results.append((name, v_true, v_disp, i_true, i_disp))
     return results
 
 
 def main():
-    card = []                                       # (条目, 满分, 得分, 说明)
-    print("=" * 66)
-    print("  课程验收预演（仿真版）— 第一阶段 DC-DC 稳压电源 + 监测链")
-    print("  评分依据：测试方法和评分规则（2025-11-25 版）表 2")
-    print("  仿真范围：监测链 FIL + 被控对象静态行为；纹波/效率需实机")
-    print("=" * 66)
+    model_checks = []
+    fil_card = []
+    print("=" * 72)
+    print("  课程验收预演（证据分级版）— 第一阶段 DC-DC 稳压电源 + 监测链")
+    print("  A=模型一致性检查（不计真实验收分）；B=FIL 合成激励（仅验证固件链路）")
+    print("=" * 72)
 
-    # ---------------- Part A：被控对象静态指标（模型） ----------------
-    print("\n[Part A · 被控对象模型]")
+    # ---------------- Part A：模型一致性，不冒充硬件验收 ----------------
+    print("\n[Part A · BuckPlant 模型一致性，不计真实验收分]")
 
-    # A1 输出电压绝对精度（10 分）：5.1Ω 与空载
-    p = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=5.1,
-                  vin_mv=10000.0, line_reg_ppm_per_v=LINE_REG_PPM, ocp_trip_a=OCP_TRIP_A)
-    p.advance(0.05)
-    v_51 = p.vout_mv
-    s1, s2 = score_abs_voltage(v_51), score_abs_voltage(v_51)   # 空载同模型稳态
-    card.append(("输出电压绝对精度", 10, s1 + s2,
-                 "5.1Ω→%.0fmV ✓ 空载→%.0fmV ✓（4.85~5.15V）" % (v_51, p.vout_nominal_mv)))
-
-    # A2 负载调整率（5 分）：5.1Ω vs 10Ω
+    p_load = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=5.1,
+                       vin_mv=10000.0, line_reg_ppm_per_v=LINE_REG_PPM,
+                       ocp_trip_a=OCP_TRIP_A)
+    p_open = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=1e9,
+                       vin_mv=10000.0, line_reg_ppm_per_v=LINE_REG_PPM,
+                       ocp_trip_a=OCP_TRIP_A)
     p10 = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=10.0,
-                    vin_mv=10000.0, line_reg_ppm_per_v=LINE_REG_PPM, ocp_trip_a=OCP_TRIP_A)
-    p10.advance(0.05)
-    dv_load = abs(p10.vout_mv - v_51)
-    card.append(("负载调整率", 5, score_load_regulation(dv_load),
-                 "5.1Ω vs 10Ω ΔV=%.1fmV（<10mV 满分）" % dv_load))
-
-    # A3 电压调整率（5 分）：Vin 10→20V
+                    vin_mv=10000.0, line_reg_ppm_per_v=LINE_REG_PPM,
+                    ocp_trip_a=OCP_TRIP_A)
     p20 = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=5.1,
-                    vin_mv=20000.0, line_reg_ppm_per_v=LINE_REG_PPM, ocp_trip_a=OCP_TRIP_A)
-    p20.advance(0.05)
-    dv_line = abs(p20.vout_mv - v_51)
-    card.append(("电压调整率", 5, score_line_regulation(dv_line),
-                 "Vin 10→20V ΔV=%.1fmV（<10mV 满分，%gppm/V）" % (dv_line, LINE_REG_PPM)))
+                    vin_mv=20000.0, line_reg_ppm_per_v=LINE_REG_PPM,
+                    ocp_trip_a=OCP_TRIP_A)
+    for p in (p_load, p_open, p10, p20):
+        p.advance(0.05)
 
-    # A4 过流保护和恢复（10 分）：2.5Ω 触发 → 负载恢复 → 自动恢复
+    abs_ok = score_abs_voltage(p_load.vout_mv) == 5 and score_abs_voltage(p_open.vout_mv) == 5
+    load_dv = abs(p10.vout_mv - p_load.vout_mv)
+    line_dv = abs(p20.vout_mv - p_load.vout_mv)
+    load_ok = score_load_regulation(load_dv) == 5
+    line_ok = score_line_regulation(line_dv) == 5
+    model_checks.extend([
+        ("输出电压模型", abs_ok, "5.1Ω=%.1fmV，近似空载=%.1fmV" %
+         (p_load.vout_mv, p_open.vout_mv)),
+        ("负载调整率模型", load_ok, "5.1Ω vs 10Ω ΔV=%.2fmV" % load_dv),
+        ("电压调整率模型", line_ok,
+         "Vin 10→20V ΔV=%.2fmV；注意 %gppm/V 是模型设定值，不是测量值" %
+         (line_dv, LINE_REG_PPM)),
+    ])
+
     plant = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=5.1,
                       vin_mv=10000.0, line_reg_ppm_per_v=LINE_REG_PPM,
                       ocp_trip_a=OCP_TRIP_A, ocp_hiccup_s=0.05)
     plant.advance(0.05)
-    plant.set_load(2.5)                             # I = 2A > 1.5A
+    plant.set_load(2.5)
     plant.advance(0.01)
     tripped_ok = plant.tripped and plant.vout_mv < 200
-    plant.advance(0.05)                             # 打嗝重试仍过流 → 保持
+    plant.advance(0.05)
     plant.set_load(5.1)
     plant.advance(0.01)
     recovered = not plant.tripped
     plant.advance(0.05)
     recovered = recovered and abs(plant.vout_mv - 5000.0) < 50
-    card.append(("过流保护和恢复", 10, score_protection(tripped_ok, recovered),
-                 "2.5Ω(I=2A)触发关断=%s；5.1Ω 自动恢复=%s" % (tripped_ok, recovered)))
+    protection_ok = score_protection(tripped_ok, recovered) == 10
+    model_checks.append((
+        "过流关断/安全负载恢复模型", protection_ok,
+        "2.5Ω 触发=%s；回到5.1Ω恢复=%s（当前模型不声称复现周期 hiccup 波形）" %
+        (tripped_ok, recovered),
+    ))
 
-    for name, full, got, note in card[:4]:
-        print("  %s %s (%d分): %s" % ("✓" if got == full else "✗", name, full, note))
+    for name, ok, note in model_checks:
+        print("  %s %s — %s" % ("PASS" if ok else "FAIL", name, note))
 
-    # ---------------- Part B：监测链 FIL ----------------
-    print("\n[Part B · 监测链 FIL]（课程固件 adc_demo + 虚拟实验台）")
+    # ---------------- Part B：FIL 合成激励 ----------------
+    print("\n[Part B · FIL 合成激励；可检查固件链路，不代表实板硬件得分]")
     renode = find_renode()
     if not renode:
         print("  SKIP：未找到 Renode（设 RENODE_EXE）")
@@ -144,31 +151,34 @@ def main():
     else:
         results = fil_monitoring(renode)
         if results is None:
-            print("  SKIP：FIL 回读数量不足")
+            print("  FAIL：FIL 回读数量不足")
         else:
             for name, v_true, v_disp, i_true, i_disp in results:
                 ev = score_monitor_voltage(v_disp - v_true)
                 ei = score_monitor_current(i_disp - i_true)
-                card.append(("监测电压@%s" % name, 5, ev,
-                             "真值 %.3fV / 显示折算 %.4fV" % (v_true / 1000, v_disp / 1000)))
-                card.append(("监测电流@%s" % name, 5, ei,
-                             "真值 %.3fA / 显示折算 %.4fA" % (i_true, i_disp)))
-                print("  %s 监测电压@%s (5分): 误差 %.1fmV → %d 分"
-                      % ("✓" if ev == 5 else "△", name, abs(v_disp - v_true), ev))
-                print("  %s 监测电流@%s (5分): 误差 %.1fmA → %d 分"
-                      % ("✓" if ei == 5 else "△", name, abs(i_disp - i_true) * 1000, ei))
+                fil_card.append(("监测电压@%s" % name, 5, ev,
+                                 "合成真值 %.3fV / 固件显示折算 %.4fV" %
+                                 (v_true / 1000, v_disp / 1000)))
+                fil_card.append(("监测电流@%s" % name, 5, ei,
+                                 "合成真值 %.3fA / 固件显示折算 %.4fA" %
+                                 (i_true, i_disp)))
+                print("  %s 电压@%s: 误差 %.1fmV → 阈值分 %d/5" %
+                      ("PASS" if ev == 5 else "CHECK", name, abs(v_disp - v_true), ev))
+                print("  %s 电流@%s: 误差 %.1fmA → 阈值分 %d/5" %
+                      ("PASS" if ei == 5 else "CHECK", name, abs(i_disp - i_true) * 1000, ei))
 
-    # ---------------- 记分卡 ----------------
-    print("\n" + "-" * 66)
-    full = sum(c[1] for c in card)
-    got = sum(c[2] for c in card)
-    for name, f, g, note in card:
-        print("  %s/%d  %s — %s" % (g, f, name, note))
-    print("-" * 66)
-    print("  仿真可验小计：%d / %d" % (got, full))
-    print("  [需实机] 输出纹波 (20分) · 电源转换效率 (40分) — 模型为准静态/无损耗，N/A")
-    print("=" * 66)
-    return 0
+    print("\n" + "-" * 72)
+    if fil_card:
+        full = sum(c[1] for c in fil_card)
+        got = sum(c[2] for c in fil_card)
+        print("  FIL 合成激励阈值小计：%d / %d（仅固件处理链，不是实板验收分）" % (got, full))
+    else:
+        print("  FIL 合成激励：N/A")
+    print("  真实硬件验收分：N/A — 输出精度/调整率/保护/纹波/效率都需独立实测证据")
+    print("  模型检查通过：%d/%d；它们是回归检查，不计验收得分" %
+          (sum(1 for _, ok, _ in model_checks if ok), len(model_checks)))
+    print("-" * 72)
+    return 0 if all(ok for _, ok, _ in model_checks) else 1
 
 
 if __name__ == "__main__":
