@@ -17,6 +17,7 @@ firmware/local/
 
 # Renode 运行产物
 renode/logs/
+snapshots/
 robot_output.xml
 log.html
 report.html
