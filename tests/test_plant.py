@@ -1,9 +1,16 @@
 """信号链与被控对象模型测试：ADC 编码、调理通道、钳位、悬空引脚行为。"""
 import pytest
 
-from a2000sim.plant import (VREF_MV, ADC_MAX, CURRENT_CHAIN, FLOATING_PE3,
-                            FLOATING_PE2, FloatingPinModel, VOLTAGE_CHAIN,
-                            adc_code, adc_mv)
+from a2000sim.plant import (VREF_MV, ADC_MAX, CURRENT_CHAIN, CURRENT_ADC_CHANNEL,
+                            CURRENT_ADC_PIN, FLOATING_PE3, FLOATING_PE2,
+                            FloatingPinModel, VOLTAGE_ADC_CHANNEL, VOLTAGE_ADC_PIN,
+                            VOLTAGE_CHAIN, adc_code, adc_mv)
+
+def test_physical_adc_channel_mapping():
+    """[SCH] 电流=PE3/AIN0/CH0；电压=PE2/AIN1/CH1。"""
+    assert (CURRENT_ADC_CHANNEL, CURRENT_ADC_PIN) == (0, "PE3/AIN0")
+    assert (VOLTAGE_ADC_CHANNEL, VOLTAGE_ADC_PIN) == (1, "PE2/AIN1")
+
 
 def test_adc_encoding():
     assert adc_code(0) == 0
