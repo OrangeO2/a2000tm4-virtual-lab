@@ -85,6 +85,8 @@ def main():
     cmds = [
         "$bin=@%s" % FW_ADC,
         "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
+        "sysbus WriteDoubleWord 0x50000040 1250",
+        "sysbus WriteDoubleWord 0x50000044 1250",
         'emulation RunFor "00:00:02"',
     ]
     for i in range(8):
@@ -218,11 +220,34 @@ def main():
                 else:
                     print("（未计入失败：SysTick 风暴与显示撕裂问题见 docs/4 v0.4 已知问题；"
                           "设 FIL_SMOKE_STRICT=1 使其计入失败）")
+    # ---- 测试 5：无功率板实测基线（[M-5] probe7 回填） ----
+    # bench 默认激励 = 实测连续采样尾点（PE3=1150mV→码1427；PE2=1058mV→码1314）。
+    # adc_demo 无任何注入 → 显示应与实板基线一致（确定性仿真，精确相等）。
+    cmds = [
+        "$bin=@%s" % FW_ADC,
+        "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
+        'emulation RunFor "00:00:02"',
+    ]
+    for i in range(8):
+        cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
+    out = run_renode(renode, cmds)
+    vals = readbacks(out)
+    if len(vals) < 8:
+        failures.append("场景 5 回读数量不足：got %d" % len(vals))
+    else:
+        d = vals[:8]
+        expect = [1, 3, 1, 3, 1, 4, 2, 7]   # GRID1-4=CH1"1313"，GRID5-8=CH0"1427"
+        if d == expect:
+            print("PASS [无功率板基线]: 显示 CH0=%s CH1=%s（码 1427/1313）"
+                  % ("".join(map(str, d[4:8])), "".join(map(str, d[0:4]))))
+        else:
+            failures.append("[无功率板基线]: 显示 %s 期望 %s" % (d, expect))
+
     if failures:
         for f in failures:
             print("FAIL:", f)
         return 1
-    print("FIL SMOKE: 4/4 通过")
+    print("FIL SMOKE: 5/5 通过")
     return 0
 
 

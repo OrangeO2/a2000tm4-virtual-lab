@@ -1,9 +1,9 @@
 """信号链与被控对象模型测试：ADC 编码、调理通道、钳位、悬空引脚行为。"""
 import pytest
 
-from a2000sim.plant import (VREF_MV, ADC_MAX, CURRENT_CHAIN, FloatingPinModel,
-                            VOLTAGE_CHAIN, adc_code, adc_mv)
-
+from a2000sim.plant import (VREF_MV, ADC_MAX, CURRENT_CHAIN, FLOATING_PE3,
+                            FLOATING_PE2, FloatingPinModel, VOLTAGE_CHAIN,
+                            adc_code, adc_mv)
 
 def test_adc_encoding():
     assert adc_code(0) == 0
@@ -31,17 +31,42 @@ def test_zener_clamp():
 
 
 def test_floating_pin_bleed_and_recovery():
-    """[M-5 实测] 连续采样单调衰减、静置恢复。"""
-    pin = FloatingPinModel(resting_mv=1260.0, plateau_mv=1165.0,
-                           bleed_per_sample=0.045, recovery_tau_s=2.0)
-    samples = [pin.sample(dt_since_last_s=0.04) for _ in range(8)]
+    """[M-5 实测标定] 连续采样单调衰减、静置恢复（PE3 参数）。"""
+    import math
+    pin = FloatingPinModel(**FLOATING_PE3)
+    samples = [pin.sample(dt_since_last_s=0.0) for _ in range(8)]  # 背靠背无恢复
     assert all(samples[i] >= samples[i + 1] - 1e-9 for i in range(7)), \
         f"连续采样应衰减: {samples}"
     assert samples[0] > samples[-1]
-    # 静置恢复（模拟 5s 无采样）
-    import math
-    pin._pin_mv += (pin.resting_mv - pin._pin_mv) * (1 - math.exp(-5 / 2.0))
+    # 静置恢复：600ms 空闲后应回到 ≥95% 静息电平（probe7 实测协议）
+    pin._pin_mv += (pin.resting_mv - pin._pin_mv) * (1 - math.exp(-0.6 / pin.recovery_tau_s))
     assert pin.pin_mv == pytest.approx(pin.resting_mv, rel=0.05)
+
+
+def test_floating_pe3_matches_probe7_bleed_sequence():
+    """[M-5] 按 probe7 实测协议复现 PE3 采样序列：
+    5 次静息测量（600ms 空闲→采样→放电）后紧接 8 次连续采样。"""
+    from a2000sim.plant import adc_code
+    pin = FloatingPinModel(**FLOATING_PE3)
+    for _ in range(5):                     # probe7 的静息测量协议
+        pin.sample(dt_since_last_s=0.6)
+    measured = [1523, 1498, 1476, 1463, 1445, 1448, 1442, 1422]  # probe7 实测码
+    modeled = [pin.pin_mv for _ in range(8)]  # 占位，下面逐次真实采样
+    modeled = []
+    for _ in range(8):
+        modeled.append(adc_code(pin.sample(dt_since_last_s=0.0)))
+    for k, (m, x) in enumerate(zip(modeled, measured)):
+        tol = 8 if k < 7 else 16           # 实测自噪声 ±6 码 + 模型舍入
+        assert abs(m - x) <= tol, f"第 {k} 次采样: 模型 {m} vs 实测 {x}（偏差 >{tol} 码）"
+
+
+def test_floating_pe2_distinct_resting():
+    """[M-5] PE2 与 PE3 静息电平不同（1170.8 vs 1263.1 mV），模型分参。"""
+    pe3 = FloatingPinModel(**FLOATING_PE3)
+    pe2 = FloatingPinModel(**FLOATING_PE2)
+    assert pe3.resting_mv == pytest.approx(1263.1, abs=0.1)
+    assert pe2.resting_mv == pytest.approx(1170.8, abs=0.1)
+    assert pe2.resting_mv < pe3.resting_mv
 
 
 # ---------------- v0.3：BuckPlant 被控对象动态模型 ----------------

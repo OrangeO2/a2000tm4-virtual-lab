@@ -360,7 +360,7 @@ if request.IsInit:
     S["pstb"] = 1; S["pclk"] = 1; S["pscl"] = 1; S["psda"] = 1
     S["gmisc"] = {}; S["lmisc"] = {}
     S["actss"] = 0; S["aris"] = 0; S["emux"] = 0; S["ssmux"] = 0; S["ssctl"] = 0; S["apc"] = 7
-    S["fifo"] = []; S["chmv"] = [1250, 1250]; S["alast"] = [0, 0]
+    S["fifo"] = []; S["chmv"] = [1150, 1058]; S["alast"] = [0, 0]  # [M-5] 无功率板基线：连续采样尾点 PE3=1150.5/PE2=1058.2 mV
     S["dacc"] = 0; S["dfrms"] = 0; S["lfr"] = [0x98, 0x00, 0x00]
 elif request.IsWrite:
     dispatch_write(request)

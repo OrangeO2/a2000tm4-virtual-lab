@@ -49,16 +49,32 @@ VOLTAGE_CHAIN = ConditioningChannel(scale=0.5)            # Vout(mV) → pin(mV)
 CURRENT_CHAIN = ConditioningChannel(scale=R_SENSE_OHM * DIFF_GAIN * 1000.0)  # I(A) → pin(mV)
 
 
+# [M-5 实测标定] probe7（2026-10-03，docs/2）实测的悬空引脚参数：
+#   PE3(AIN0/CH0)：静息 1567.6 码 = 1263.1 mV（5 次独立测量 1559–1578）；
+#                  连续采样尾点 1422–1448 码（中点 1428 码 = 1150.5 mV）；
+#                  逐样本衰减系数 ~0.32；600ms 空闲恢复 ≥98%（tau ≈ 0.15s）
+#   PE2(AIN1/CH1)：静息 1454 码 = 1170.8 mV（1446–1460）；
+#                  尾点未直接测量，按与 PE3 相同的绝对跌落估计 1314 码 = 1058.2 mV
+FLOATING_PE3 = dict(resting_mv=1263.1, plateau_mv=1150.5,
+                    bleed_per_sample=0.32, recovery_tau_s=0.15)
+FLOATING_PE2 = dict(resting_mv=1170.8, plateau_mv=1058.2,
+                    bleed_per_sample=0.32, recovery_tau_s=0.15)
+
+
 class FloatingPinModel:
-    """悬空 ADC 引脚的现象学模型（参数标定自 M-5 实测）。
+    """悬空 ADC 引脚的现象学模型（参数标定自 M-5 实测，probe7 回填）。
 
     行为：静息电平 resting_mv；每被采样一次向 plateau_mv 衰减 bleed_per_sample；
     空闲时以 recovery_tau（秒）指数恢复。这不是电路仿真，是把实测曲线参数化，
     用于生成"类真实"的 ADC 输入激励与验证采样策略（滑动平均/迟滞）。
+
+    默认参数 = PE3 实测标定（FLOATING_PE3）；PE2 用 FLOATING_PE2。
+    实测序列（PE3 连续 8 次采样，码）：1523→1498→1476→1463→1445→1448→1442→1422，
+    模型复现见 tests/test_plant.py::test_floating_pe3_matches_probe7_bleed。
     """
 
-    def __init__(self, resting_mv: float = 1260.0, plateau_mv: float = 1165.0,
-                 bleed_per_sample: float = 0.045, recovery_tau_s: float = 2.0):
+    def __init__(self, resting_mv: float = 1263.1, plateau_mv: float = 1156.0,
+                 bleed_per_sample: float = 0.32, recovery_tau_s: float = 0.15):
         self.resting_mv = resting_mv
         self.plateau_mv = plateau_mv
         self.bleed_per_sample = bleed_per_sample

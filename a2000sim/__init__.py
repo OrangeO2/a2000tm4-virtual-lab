@@ -23,6 +23,8 @@ from .dac6571 import (  # noqa: F401
 )
 from .plant import (  # noqa: F401
     BuckPlant,
+    FLOATING_PE3,
+    FLOATING_PE2,
     VREF_MV,
     ADC_MAX,
     R_SENSE_OHM,
