@@ -1,23 +1,23 @@
 # 实测数据档案（模型常数的出处）
 
 > 本文档是仿真模型的"标定证书"。所有条目均标注测量条件与工具版本，
-> 复测方法见 `tools/hwprobe/`。**修改 `models/` 中的常数前，先来这里登记新实测。**
+> 复测方法见 `tools/hwprobe/`。**修改 `a2000sim/` 中标为 `[M-x]` 的实测常数前，先来这里登记新实测。**
 
 测量环境（2026-10-03）：
 
 - 板卡：A2000TM4 底板 + EK-TM4C1294XL 核心板，ICDI 序列号 `0F00CD37`，ICDI 固件 1224
 - 探针：xpack OpenOCD 0.12.0-7 经 TI WinUSB 驱动直连（TI ICDI 驱动 2.2.1.0）
 - 方法：GDB-RSP（读）+ Renode monitor mww（写）混合，CPU 暂停态逐寄存器读取
-- 原始探针脚本：`tools/hwprobe/probe*.py`，原始输出 `probe*_result.txt`
+- 原始探针脚本：`tools/hwprobe/probe*.py`；当前脚本默认把本地运行输出写到 `tools/hwprobe/results/`（该目录不入库）。本文件保存经复核的测量摘要；未提交的历史原始输出不应被当作仓库内可独立审计证据。
 
 ## M-1 芯片身份
 
 | 事实 | 值 | 探针 |
 |---|---|---|
 | CPUID | `0x410FC241`（Cortex-M4 r0p1） | probe4 §D |
-| DID0 / DID1 | `0x100A0002` / `0x101FC06E`（双读稳定） | probe2/4/8 |
-| Flash | FSIZE=`0x1FF` → 1MB | probe3/8 |
-| SRAM | SSIZE=`0x3FF` → 256KB | probe3 |
+| DID0 / DID1 | `0x100A0002` / `0x101FC06E`（双读稳定） | probe4/8 |
+| Flash | FSIZE=`0x1FF` → 1MB | probe8 |
+| SRAM | SSIZE=`0x3FF` → 256KB | probe8 |
 | EEPROM | EESIZE=`0x00600600` → 6KB, 96 块 | probe5 |
 | EEDONE（时钟开启后） | 0（模块空闲） | probe5 |
 
@@ -32,7 +32,7 @@
 | SysTick CSR | `0x00010007` | ENABLE=1, TICKINT=1, CLKSOURCE=1 |
 | NVIC ISER0 | `0x00000000` | 无外设中断，纯轮询 |
 
-**模型引用**：`models/a2000sim/fw_algorithms.py::SYSCLOCK_HZ`、Renode 平台 `systickFrequency`。
+**模型引用**：`a2000sim/fw_algorithms.py::SYSCLOCK_HZ`、Renode 平台 `systickFrequency`。
 
 ## M-3 运行态时钟门控（驻留固件的行为画像）
 
@@ -63,12 +63,12 @@ PF3 PCTL=6 → **M0PWM3**（无源蜂鸣器复用已配置，PWMENABLE=0 未使�
 |---|---|---|
 | PE3(AIN0) 静息码 | ~1559–1578 → **~1260 mV**，5 次独立测量稳定 | probe7 |
 | PE2(AIN1) 静息码 | ~1446–1460 → **~1170 mV** | probe7 |
-| 连续 8 次触发 | 1725→1469 单调衰减（高阻节点被采样电容放电） | probe6/7 |
+| 连续 8 次触发 | 1725→1469 单调衰减（高阻节点被采样电容放电） | probe7 |
 | 静置 600ms 后 | 恢复至 ~1260mV 稳定 | probe7 |
 | 片上温度 | 码 1888 → **43.8°C**（后续 48/50°C，TS 通道建立时间效应） | probe7 |
 | ADC0 PC（时钟开启后真值） | `0x7` | probe6 |
 
-**模型引用**：`models/a2000sim/plant.py::FloatingPinModel` 复现"静置恢复/连续采样衰减"行为。
+**模型引用**：`a2000sim/plant.py::FloatingPinModel` 复现"静置恢复/连续采样衰减"行为。
 
 #### M-5b 模型回填记录（2026-10-04，probe7 数据 → a2000sim）
 
@@ -103,8 +103,8 @@ PF3 PCTL=6 → **M0PWM3**（无源蜂鸣器复用已配置，PWMENABLE=0 未使�
 
 **标定工作流（功率板确认激活后执行）**：
 1. `tools/hwprobe` 同协议测 PE2/PE3（每条件 600ms 空闲→单次转换 ×6，取均值）
-2. 电压链：vdiv_ratio = PE3_mV / Vout_万用表实测；vdiv_off 由空载/带载两点拟合
-3. 电流链：真值 I = Vout_万用表 / R_load；i_gain = (PE2_mV − i_off)/I
+2. 电压链（PE2/AIN1/CH1）：vdiv_ratio = PE2_mV / Vout_万用表实测；vdiv_off 由空载/带载两点拟合
+3. 电流链（PE3/AIN0/CH0）：真值 I = Vout_万用表 / R_load；i_gain = (PE3_mV − i_off)/I
 4. 回填 `BuckPlant(vdiv_ratio=…, vdiv_off_mv=…, i_gain_mv_per_a=…, i_off_mv=…)`
 5. `fil_smoke` 场景 5 基线断言同步更新
 
