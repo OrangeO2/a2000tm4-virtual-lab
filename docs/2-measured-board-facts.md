@@ -66,7 +66,7 @@ PF3 PCTL=6 → **M0PWM3**（无源蜂鸣器复用已配置，PWMENABLE=0 未使�
 | 连续 8 次触发 | 1725→1469 单调衰减（高阻节点被采样电容放电） | probe7 |
 | 静置 600ms 后 | 恢复至 ~1260mV 稳定 | probe7 |
 | 片上温度 | 码 1888 → **43.8°C**（后续 48/50°C，TS 通道建立时间效应） | probe7 |
-| ADC0 PC（时钟开启后真值） | `0x7` | probe6 |
+| ADC0 PC（时钟开启后真值） | `0x7` | probe7 |
 
 **模型引用**：`a2000sim/plant.py::FloatingPinModel` 复现"静置恢复/连续采样衰减"行为。
 
@@ -119,7 +119,7 @@ FFFFFFFF FFFFFFFF 1CD1FFAD FFFFFFFF 736F7865 21657469 66663037 FFFFFFFF
 **"exosite!70ff"** —— EK-TM4C1294XL 出厂 qs_iot（Exosite 云连接演示）写入的
 设备标识残留。EEPROM 不随固件擦除消失，故此数据跨固件存活。
 
-**模型引用**：`tests/test_measured_facts.py::test_eeprom_factory_pattern`。
+**回归引用**：`tests/test_measured_facts.py::test_eeprom_factory_pattern`（防止原始字序/解码说明漂移）。
 
 ## M-7 驻留固件考古
 
