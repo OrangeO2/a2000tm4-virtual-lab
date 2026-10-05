@@ -51,6 +51,9 @@ def key_scan_bytes():
 def tm_dio_out():
     if S["tmmode"] == "key_read" and S["pstb"] == 0 and 0 <= S["rptr"] < 32:
         byte = key_scan_bytes()[(S["rptr"] // 8) % 4]
+        S["kdbg"] = (S.get("kdbg", 0) + 1) if S["rptr"] % 8 == 0 and S["rptr"] < 8 else S.get("kdbg", 0)
+        if S["rptr"] % 8 == 0:
+            S["klast"] = byte
         return (byte >> (S["rptr"] % 8)) & 1
     return 1
 
@@ -161,6 +164,7 @@ def gpio_read(port, off):
 def i2c_feed(scl, sda, pscl, psda):
     if scl == 1 and pscl == 1:
         if sda == 0 and psda == 1:                    # START
+            S["istarts"] = S.get("istarts", 0) + 1
             S["ifrm"] = 1; S["ibits"] = []; S["ibytes"] = []; S["iack"] = 0
         elif sda == 1 and psda == 0 and S["ifrm"]:     # STOP
             if len(S["ibytes"]) >= 3 and S["ibytes"][0] == 0x98:
@@ -315,6 +319,12 @@ def bench_read(off):
         return S["dfrms"]
     if 0x5C <= off < 0x60:
         return S["lfr"][off - 0x5C]
+    if off == 0x60:
+        return S.get("istarts", 0)
+    if off == 0x61:
+        return S.get("kdbg", 0)
+    if off == 0x62:
+        return S.get("klast", 0)
     return 0
 
 
@@ -362,6 +372,7 @@ if request.IsInit:
     S["actss"] = 0; S["aris"] = 0; S["emux"] = 0; S["ssmux"] = 0; S["ssctl"] = 0; S["apc"] = 7
     S["fifo"] = []; S["chmv"] = [1150, 1058]; S["alast"] = [0, 0]  # [M-5] 无功率板基线：连续采样尾点 PE3=1150.5/PE2=1058.2 mV
     S["dacc"] = 0; S["dfrms"] = 0; S["lfr"] = [0x98, 0x00, 0x00]
+    S["istarts"] = 0; S["kdbg"] = 0; S["klast"] = 0
 elif request.IsWrite:
     dispatch_write(request)
 elif request.IsRead:

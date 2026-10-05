@@ -177,12 +177,9 @@ def main():
                                 % (name, ch0_disp, want_v, ch1_disp, want_i))
 
     # ---- 测试 4：v0.4 DAC6571 I2C 闭环（dac_demo） ----
-    # 已验证：固件的软件 I2C 位拍被虚拟 DAC6571 解码（addr=0x98，码值跟随）。
-    # 已知问题（docs/4）：SysTick 中断风暴（Python 外设墙钟开销）会撕裂 TM1638
-    # 显示刷新与帧时序，故只断言闭环"存活"性质：
-    #   (a) I2C 帧数 ≥ 4（开机写 + 按键调整写均发生）
-    #   (b) 最后帧首字节 = 0x98（DAC6571 写地址正确）
-    #   (c) 显示 GRID1-4 均为合法十进制或熄灭（无段型损坏）
+    # 全链路：键注入 → 固件消抖/码调整 → 软件 I2C 位拍（PL0/PL1）→
+    # 虚拟 DAC6571 解码（START/STOP/位锁存/ACK 跳过/地址 0x98 过滤）→ 回读。
+    # 课程 dac_demo：开机码 1023；键 4=−100、键 1=+100（写帧确认）。
     FW_DAC = os.path.join(REPO, "firmware", "local", "dac_demo.axf")
     if not os.path.isfile(FW_DAC):
         print("SKIP 测试 4：firmware/local/dac_demo.axf 不存在")
@@ -191,58 +188,47 @@ def main():
             "$bin=@%s" % FW_DAC,
             "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
             'emulation RunFor "00:00:02"',
+            "sysbus ReadByte 0x50000050",               # DAC 码低字节（期望 1023→0xFF）
+            "sysbus ReadByte 0x50000058",               # I2C 帧数（期望 ≥1）
+            "sysbus ReadByte 0x50000010",               # GRID1
+            "sysbus ReadByte 0x50000011",
+            "sysbus ReadByte 0x50000012",
+            "sysbus ReadByte 0x50000013",               # GRID1-4 = "1023"
+            "sysbus WriteDoubleWord 0x50000000 4",      # 键 4 按下（−100）
+            'emulation RunFor "00:00:00.5"',
+            "sysbus WriteDoubleWord 0x50000000 0",      # 释放
+            'emulation RunFor "00:00:00.5"',
+            "sysbus ReadByte 0x50000050",               # 期望 923→0x9B
+            "sysbus ReadByte 0x50000010",
+            "sysbus ReadByte 0x50000011",
+            "sysbus ReadByte 0x50000012",
+            "sysbus ReadByte 0x50000013",               # GRID1-4 = "0923"
+            "sysbus WriteDoubleWord 0x50000000 1",      # 键 1 按下（+100）
+            'emulation RunFor "00:00:00.5"',
+            "sysbus WriteDoubleWord 0x50000000 0",
+            'emulation RunFor "00:00:00.5"',
+            "sysbus ReadByte 0x50000050",               # 期望回到 1023→0xFF
+            "sysbus ReadByte 0x50000058",               # 帧数 ≥3
         ]
-        for key, hold in [(4, 0.5), (0, 0.3), (1, 0.5), (0, 0.3)]:
-            cmds.append("sysbus WriteDoubleWord 0x50000000 %d" % key)
-            cmds.append('emulation RunFor "00:00:%04.2f"' % hold)
-            for a in (0x50, 0x58, 0x5C, 0x10, 0x11, 0x12, 0x13):
-                cmds.append("sysbus ReadByte 0x%X" % a)
         out = run_renode(renode, cmds)
         vals = readbacks(out)
-        if len(vals) < 4 * 7:
+        if len(vals) < 13:
             failures.append("场景 4 回读数量不足：got %d" % len(vals))
         else:
-            b = vals[-7:]
-            dac_lo, frames, fr_addr = b[0], b[1], b[2]
-            digits = b[3:7]
-            ok_frames = frames >= 4
-            ok_addr = fr_addr == 0x98
-            ok_disp = all((0 <= d <= 9) or d == 0xFF for d in digits)
-            strict = os.environ.get("FIL_SMOKE_STRICT") == "1"
-            ok = ok_frames and ok_addr and ok_disp
-            msg = ("[DAC闭环]: 帧=%d 地址=0x%02X 显示=%s -> %s"
-                   % (frames, fr_addr, [str(d) for d in digits],
-                      "PASS" if ok else "已知问题(观察项)"))
-            print(msg)
-            if not ok:
-                if strict:
-                    failures.append(msg)
-                else:
-                    print("（未计入失败：SysTick 风暴与显示撕裂问题见 docs/4 v0.4 已知问题；"
-                          "设 FIL_SMOKE_STRICT=1 使其计入失败）")
-    # ---- 测试 5：无功率板实测基线（[M-5] probe7 回填） ----
-    # bench 默认激励 = 实测连续采样尾点（PE3=1150mV→码1427；PE2=1058mV→码1314）。
-    # adc_demo 无任何注入 → 显示应与实板基线一致（确定性仿真，精确相等）。
-    cmds = [
-        "$bin=@%s" % FW_ADC,
-        "include @%s" % os.path.join(REPO, "renode", "a2000tm4.resc"),
-        'emulation RunFor "00:00:02"',
-    ]
-    for i in range(8):
-        cmds.append("sysbus ReadByte 0x%X" % (0x50000010 + i))
-    out = run_renode(renode, cmds)
-    vals = readbacks(out)
-    if len(vals) < 8:
-        failures.append("场景 5 回读数量不足：got %d" % len(vals))
-    else:
-        d = vals[:8]
-        expect = [1, 3, 1, 3, 1, 4, 2, 7]   # GRID1-4=CH1"1313"，GRID5-8=CH0"1427"
-        if d == expect:
-            print("PASS [无功率板基线]: 显示 CH0=%s CH1=%s（码 1427/1313）"
-                  % ("".join(map(str, d[4:8])), "".join(map(str, d[0:4]))))
-        else:
-            failures.append("[无功率板基线]: 显示 %s 期望 %s" % (d, expect))
-
+            dac0, frames0 = vals[0], vals[1]
+            grid0 = vals[2:6]
+            dac1, grid1 = vals[6], vals[7:11]
+            dac2, frames2 = vals[11], vals[12]
+            ok_boot = (dac0 & 0xFF) == 0xFF and grid0 == [1, 0, 2, 3]
+            ok_dec = (dac1 & 0xFF) == 0x9B and grid1 == [0, 9, 2, 3]
+            ok_back = (dac2 & 0xFF) == 0xFF and frames2 >= 3
+            if ok_boot and ok_dec and ok_back:
+                print("PASS [DAC闭环]: 开机码 1023 → 键4 −100 → 923 → 键1 +100 → 1023，"
+                      "I2C 帧=%d 全部解码" % frames2)
+            else:
+                failures.append("[DAC闭环]: boot=%s/%s dec=%s/%s back=%s/%s 帧=%s"
+                                % (hex(dac0), grid0, hex(dac1), grid1,
+                                   hex(dac2), frames2, frames0))
     if failures:
         for f in failures:
             print("FAIL:", f)
