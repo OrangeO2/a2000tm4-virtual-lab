@@ -123,7 +123,11 @@ class BuckPlant:
                  line_reg_ppm_per_v: float = 0.0,
                  ocp_trip_a: float = 1.5,
                  ocp_hiccup_s: float = 0.1,
-                 ocp_enabled: bool = True):
+                 ocp_enabled: bool = True,
+                 vdiv_ratio: float = 0.5,
+                 vdiv_off_mv: float = 0.0,
+                 i_gain_mv_per_a: float = 1000.0,
+                 i_off_mv: float = 0.0):
         self.vout_nominal_mv = vout_nominal_mv
         self.soft_start_ms = soft_start_ms
         self.load_res_ohm = load_res_ohm
@@ -137,6 +141,13 @@ class BuckPlant:
         self.ocp_trip_a = ocp_trip_a
         self.ocp_hiccup_s = ocp_hiccup_s
         self.ocp_enabled = ocp_enabled
+        # 调理链参数 [SCH 理论值；实测标定后经 probe7 协议回填，见 docs/2 M-5c]
+        # pin_v = Vout × vdiv_ratio + vdiv_off_mv
+        # pin_i = I × i_gain_mv_per_a + i_off_mv
+        self.vdiv_ratio = vdiv_ratio
+        self.vdiv_off_mv = vdiv_off_mv
+        self.i_gain_mv_per_a = i_gain_mv_per_a
+        self.i_off_mv = i_off_mv
         self._tripped = False
         self._trip_t = -1e9
         self.t_s = 0.0
@@ -201,9 +212,11 @@ class BuckPlant:
         return self._tripped
 
     def pin_voltage_mv(self) -> float:
-        """电压调理输出（→ PE2 侧，adc_demo 的 CH1/AIN1）。"""
-        return VOLTAGE_CHAIN.forward(self._vout_mv)
+        """电压调理输出（[PPT] 电压=CH0=PE3/AIN0）：pin = Vout×vdiv_ratio + off。"""
+        v = self._vout_mv * self.vdiv_ratio + self.vdiv_off_mv
+        return max(0.0, min(v, 3300.0))
 
     def pin_current_mv(self) -> float:
-        """电流调理输出（→ PE3 侧，adc_demo 的 CH0/AIN0）。"""
-        return CURRENT_CHAIN.forward(self.current_a)
+        """电流调理输出（[PPT] 电流=CH1=PE2/AIN1）：pin = I×i_gain + off。"""
+        v = self.current_a * self.i_gain_mv_per_a + self.i_off_mv
+        return max(0.0, min(v, 3300.0))
