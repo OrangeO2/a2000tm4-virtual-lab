@@ -82,3 +82,13 @@ def test_course_key_decode_table():
     assert decode_course_keys(0x00, 0x01) == [9]
     assert decode_course_keys(0x00, 0x00) == []
     assert decode_course_keys(0xFF, 0xFF) == []  # 精确匹配下多键/FF 不命中
+    assert decode_course_keys(0x06, 0x00) == []   # 键1+2的 OR 模式不冒充单键
+
+
+def test_key_matrix_multikey_pattern_is_not_single_key():
+    keys = KeyMatrix()
+    keys.press(1)
+    keys.press(2)
+    c = keys.key_scan_bytes()
+    assert c[0] == 0x06
+    assert decode_course_keys(c[0], c[1]) == []
