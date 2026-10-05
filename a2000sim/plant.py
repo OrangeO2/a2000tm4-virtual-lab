@@ -14,6 +14,10 @@ from dataclasses import dataclass
 VREF_MV = 3300.0    # [DS] ADC 参考电压（VDDA）
 ADC_MAX = 4095      # [DS] 12 位
 R_SENSE_OHM = 0.1   # [SCH] 稳压源板电流采样电阻 R3
+CURRENT_ADC_CHANNEL = 0
+CURRENT_ADC_PIN = "PE3/AIN0"
+VOLTAGE_ADC_CHANNEL = 1
+VOLTAGE_ADC_PIN = "PE2/AIN1"
 DIFF_GAIN = 10.0    # [课程实验2] 差分放大建议增益（10–20 取下限）
 
 
