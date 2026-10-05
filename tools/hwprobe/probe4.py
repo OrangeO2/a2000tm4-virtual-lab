@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """probe v4: layered write-path diagnosis + stable readbacks. Target always resumed."""
-import socket, time, traceback
+import os, socket, time, traceback
 
-OUT = open(r"C:\Users\42400\tools\tm4c_probe\probe4_result.txt", "w", encoding="utf-8")
+RESULT_DIR = os.environ.get("HWPROBE_OUT_DIR", os.path.join(os.path.dirname(__file__), "results"))
+os.makedirs(RESULT_DIR, exist_ok=True)
+OUT = open(os.path.join(RESULT_DIR, "probe4_result.txt"), "w", encoding="utf-8")
 def p(*a):
     line = " ".join(str(x) for x in a)
     print(line); OUT.write(line + "\n"); OUT.flush()
@@ -185,9 +187,10 @@ try:
              0x354: "FAN", 0x358: "EEPROM", 0x35C: "WTIMER", 0x370: "RTS", 0x374: "CCM",
              0x390: "LCD", 0x398: "1WIRE", 0x39C: "EMAC", 0x3A4: "HIM"}
     for i, v in enumerate(ppvals):
-        a = 0x400FE300 + i * 4
-        if a in names and names[a] != "-":
-            p("  %-9s @0x%08X = 0x%08X (%d present)" % (names[a], a, v, bin(v).count("1")))
+        off = 0x300 + i * 4
+        if off in names and names[off] != "-":
+            a = 0x400FE000 + off
+            p("  %-9s @0x%08X = 0x%08X (%d present)" % (names[off], a, v, bin(v).count("1")))
 except Exception:
     p("PP failed: %s" % traceback.format_exc(limit=1).strip().splitlines()[-1])
 
