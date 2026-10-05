@@ -31,6 +31,9 @@ class Tel:
     def cmd(self, c, marker="> "):
         self.s.sendall((c + "\r\n").encode())
         return self.read_until(marker)
+    def close(self):
+        try: self.s.close()
+        except Exception: pass
 
 class RSP:
     def __init__(self, port=3333):
@@ -93,7 +96,8 @@ def g_rdN(addr, nbytes, tries=4):
     return None
 
 def g_wr32(addr, val):
-    return rsp.cmd(("M%08x,4:%08x" % (addr, val)).encode())
+    payload = int(val & 0xFFFFFFFF).to_bytes(4, "little").hex()
+    return rsp.cmd(("M%08x,4:%s" % (addr, payload)).encode())
 
 tel.cmd("halt")
 
