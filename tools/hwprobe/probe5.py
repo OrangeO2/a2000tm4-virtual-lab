@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 """probe v5: telnet mww for writes (posted-write aware), gdb for reads.
 TM1638 real bus drive + ADC live + EEPROM. Always resumes target."""
-import socket, time, traceback
+import os, socket, time, traceback
 
-OUT = open(r"C:\Users\42400\tools\tm4c_probe\probe5_result.txt", "w", encoding="utf-8")
+RESULT_DIR = os.environ.get("HWPROBE_OUT_DIR", os.path.join(os.path.dirname(__file__), "results"))
+os.makedirs(RESULT_DIR, exist_ok=True)
+OUT = open(os.path.join(RESULT_DIR, "probe5_result.txt"), "w", encoding="utf-8")
 def p(*a):
     line = " ".join(str(x) for x in a)
     print(line); OUT.write(line + "\n"); OUT.flush()
@@ -179,7 +181,8 @@ try:
 
         # ---------- 3. ADC live ----------
         sect("3. ADC0 LIVE (PE3/PE2 + die temperature)")
-        rcadc = wr32(0x400FE638, 0x00000001)
+        rcadc_o = rd32(0x400FE638)
+        rcadc = wr32(0x400FE638, (rcadc_o or 0) | 0x00000001)
         p("  RCGCADC now = %s" % ("0x%08X" % rcadc if rcadc is not None else "unreadable"))
         pr = None
         for _ in range(200):
@@ -233,8 +236,8 @@ try:
         for a, v in adc_o.items():
             if v is not None: wr32(a, v)
         wr32(0x40024528, amsel_o or 0)
-        wr32(0x400FE638, 0x00000000)
-        p("  ADC0/AMSEL/RCGCADC restored")
+        wr32(0x400FE638, rcadc_o or 0)
+        p("  ADC0/AMSEL/RCGCADC restored to captured values")
     else:
         p("  (skipping TM1638/ADC — write path still broken)")
 
