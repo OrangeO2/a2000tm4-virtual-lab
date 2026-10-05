@@ -107,8 +107,8 @@ class BuckPlant:
       通过 min_load_a 参数可选计入，默认 0 以对齐评分表换算）
 
     信号链输出：
-      pin_voltage_mv() = VOLTAGE_CHAIN.forward(vout)   （0.5 分压 → PE2 侧）
-      pin_current_mv() = CURRENT_CHAIN.forward(i)      （0.1Ω×10 → PE3 侧）
+      pin_voltage_mv() = VOLTAGE_CHAIN.forward(vout)   （0.5 分压 → PE2/AIN1/CH1）
+      pin_current_mv() = CURRENT_CHAIN.forward(i)      （0.1Ω×10 → PE3/AIN0/CH0）
 
     时间推进：advance(dt_s) 由 FIL 测试分窗调用（与 Renode RunFor 同步）。
     """
@@ -138,6 +138,8 @@ class BuckPlant:
         self.vin_mv = vin_mv
         self.line_reg_ppm_per_v = line_reg_ppm_per_v
         # 过流保护 [课程任务：触发允许范围 1.1~1.9A；评分：关断 5 分+恢复 5 分]
+        # ocp_hiccup_s 名称为兼容旧 API 保留；当前模型语义是“最短关断时间”，
+        # 并不模拟周期性 hiccup 重试波形。
         self.ocp_trip_a = ocp_trip_a
         self.ocp_hiccup_s = ocp_hiccup_s
         self.ocp_enabled = ocp_enabled
@@ -179,12 +181,14 @@ class BuckPlant:
         self._dip_mv += self.dip_mv_per_a * delta_i
 
     def advance(self, dt_s: float) -> None:
-        """推进 dt_s 的虚拟时间（软启动 + 负载阶跃恢复 + 过流保护打嗝）。"""
+        """推进 dt_s 的虚拟时间（软启动 + 负载阶跃恢复 + 过流关断/安全负载恢复）。"""
         import math
         self.t_s += dt_s
         nominal = self._nominal_mv()
 
         # 过流保护判定（以额定输出下的负载电流为准）[课程任务 1.1~1.9A]
+        # 当前是课程验收所需的简化锁断模型：至少关断 ocp_hiccup_s，且仅在负载
+        # 已回到安全范围后恢复；不声称复现真实控制器的周期性 hiccup 波形。
         i_nom = (nominal / 1000.0) / self.load_res_ohm if self.load_res_ohm > 0 else self.min_load_a
         if self.ocp_enabled and not self._tripped and i_nom > self.ocp_trip_a:
             self._tripped = True
@@ -212,11 +216,11 @@ class BuckPlant:
         return self._tripped
 
     def pin_voltage_mv(self) -> float:
-        """电压调理输出（[PPT] 电压=CH0=PE3/AIN0）：pin = Vout×vdiv_ratio + off。"""
+        """电压调理输出（[SCH/PPT] 电压=CH1=PE2/AIN1）：pin = Vout×vdiv_ratio + off。"""
         v = self._vout_mv * self.vdiv_ratio + self.vdiv_off_mv
         return max(0.0, min(v, 3300.0))
 
     def pin_current_mv(self) -> float:
-        """电流调理输出（[PPT] 电流=CH1=PE2/AIN1）：pin = I×i_gain + off。"""
+        """电流调理输出（[SCH/PPT] 电流=CH0=PE3/AIN0）：pin = I×i_gain + off。"""
         v = self.current_a * self.i_gain_mv_per_a + self.i_off_mv
         return max(0.0, min(v, 3300.0))
