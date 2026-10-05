@@ -17,8 +17,7 @@ def test_adc_encoding():
     assert adc_code(3300) == ADC_MAX
     assert adc_mv(ADC_MAX) == pytest.approx(VREF_MV)
     assert adc_code(1650) == pytest.approx(ADC_MAX / 2, abs=1)
-    with pytest.raises(AssertionError):
-        assert adc_code(99999) > ADC_MAX  # 超范围被钳到满码
+    assert adc_code(99999) == ADC_MAX  # 超范围被钳到满码
 
 
 def test_voltage_chain_scale():
