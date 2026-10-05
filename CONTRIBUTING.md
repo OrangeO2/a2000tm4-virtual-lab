@@ -3,7 +3,7 @@
 ## 提交前
 
 ```bash
-pip install -e .
+pip install -e ".[test]"
 pytest tests/ -v          # 参考模型测试必须全绿
 ```
 
@@ -15,7 +15,7 @@ renode --console -e "mach create; machine LoadPlatformDescription @renode/a2000t
 
 ## 约定
 
-1. **模型常数必须有出处**：凡写入 `models/` 的数值（寄存器地址、协议常量、
+1. **模型常数必须有出处**：凡写入 `a2000sim/` 的数值（寄存器地址、协议常量、
    标定系数、时钟参数），在 docstring 中标注来源：数据手册章节、课程讲义页码，
    或 `docs/2-measured-board-facts.md` 中的实测记录编号。
 2. **不要提交课程版权材料**（固件源码/二进制），见 `NOTICE.md`；

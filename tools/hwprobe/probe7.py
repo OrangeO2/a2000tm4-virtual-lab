@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """probe v7: confirmed-halt GPIO write adjudication + proper ADC methodology."""
-import socket, time, traceback
+import os, socket, time, traceback
 
-OUT = open(r"C:\Users\42400\tools\tm4c_probe\probe7_result.txt", "w", encoding="utf-8")
+RESULT_DIR = os.environ.get("HWPROBE_OUT_DIR", os.path.join(os.path.dirname(__file__), "results"))
+os.makedirs(RESULT_DIR, exist_ok=True)
+OUT = open(os.path.join(RESULT_DIR, "probe7_result.txt"), "w", encoding="utf-8")
 def p(*a):
     line = " ".join(str(x) for x in a)
     print(line); OUT.write(line + "\n"); OUT.flush()
@@ -128,13 +130,16 @@ try:
       (("%08X" % d0) if d0 is not None else "?", ("%08X" % r4) if r4 is not None else "?", ("%08X" % r4b) if r4b is not None else "?"))
 
     sect("2. ADC PROPER METHODOLOGY (settled single conversions)")
-    mww(0x400FE638, 0x00000001)
+    rcgc_o = rd32(0x400FE638)
+    mww(0x400FE638, (rcgc_o or 0) | 0x00000001)
     pr = 0
     for _ in range(200):
         pr = rd32(0x400FEA38) or 0
         if pr & 1: break
     p("  RCGCADC=1, PRADC ready=%d" % (pr & 1))
     amsel_o = rd32(0x40024528)
+    adc_o = {a: rd32(a) for a in
+             (0x40038000, 0x40038014, 0x40038060, 0x40038064, 0x40038FC4)}
     mww(0x40024528, (amsel_o or 0) | 0x0C)
     for a, v in [(0x40038000, 0), (0x40038014, 0), (0x40038060, 0x10), (0x40038064, 0x60),
                  (0x40038FC4, 3), (0x4003800C, 2), (0x40038000, 2)]:
@@ -182,14 +187,17 @@ try:
         temp = (1475 * 4096 - 2250 * c) / 40960.0
         tvals.append((c, temp))
         p("   #%d: code=%d -> %.1f C" % (i, c, temp))
-    # restore
-    for a, v in [(0x40038000, 0), (0x40038014, 0), (0x40038060, 0), (0x40038064, 0),
-                 (0x40038FC4, 7), (0x4003800C, 0)]:
-        mww(a, v)
+    # restore captured configuration. ISC is W1C and pending conversion state cannot be recreated;
+    # all configurable registers are restored, with ACTSS restored last.
+    mww(0x40038000, 0)
+    for a in (0x40038014, 0x40038060, 0x40038064, 0x40038FC4):
+        if adc_o.get(a) is not None:
+            mww(a, adc_o[a])
+    if adc_o.get(0x40038000) is not None:
+        mww(0x40038000, adc_o[0x40038000])
     mww(0x40024528, amsel_o or 0)
-    mww(0x400FE638, 0)
-    p("  restored (RCGCADC=0, AMSEL, ADC regs)")
-    p("  NOTE: ADC0 PC original read as 0x7 earlier (clock-on real value); restored to 0x7")
+    mww(0x400FE638, rcgc_o or 0)
+    p("  restored captured RCGCADC/AMSEL/ADC configuration (pending RIS state is not restorable)")
 
     sect("3. RESUME")
     rsp.close(); time.sleep(0.3)

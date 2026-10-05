@@ -1,17 +1,23 @@
 """信号链与被控对象模型测试：ADC 编码、调理通道、钳位、悬空引脚行为。"""
 import pytest
 
-from a2000sim.plant import (VREF_MV, ADC_MAX, CURRENT_CHAIN, FLOATING_PE3,
-                            FLOATING_PE2, FloatingPinModel, VOLTAGE_CHAIN,
-                            adc_code, adc_mv)
+from a2000sim.plant import (VREF_MV, ADC_MAX, CURRENT_CHAIN, CURRENT_ADC_CHANNEL,
+                            CURRENT_ADC_PIN, FLOATING_PE3, FLOATING_PE2,
+                            FloatingPinModel, VOLTAGE_ADC_CHANNEL, VOLTAGE_ADC_PIN,
+                            VOLTAGE_CHAIN, adc_code, adc_mv)
+
+def test_physical_adc_channel_mapping():
+    """[SCH] 电流=PE3/AIN0/CH0；电压=PE2/AIN1/CH1。"""
+    assert (CURRENT_ADC_CHANNEL, CURRENT_ADC_PIN) == (0, "PE3/AIN0")
+    assert (VOLTAGE_ADC_CHANNEL, VOLTAGE_ADC_PIN) == (1, "PE2/AIN1")
+
 
 def test_adc_encoding():
     assert adc_code(0) == 0
     assert adc_code(3300) == ADC_MAX
     assert adc_mv(ADC_MAX) == pytest.approx(VREF_MV)
     assert adc_code(1650) == pytest.approx(ADC_MAX / 2, abs=1)
-    with pytest.raises(AssertionError):
-        assert adc_code(99999) > ADC_MAX  # 超范围被钳到满码
+    assert adc_code(99999) == ADC_MAX  # 超范围被钳到满码
 
 
 def test_voltage_chain_scale():
@@ -116,10 +122,10 @@ def test_buck_pin_mapping_end_to_end_course_criterion():
     """
     plant = BuckPlant(vout_nominal_mv=5000.0, soft_start_ms=30.0, load_res_ohm=5.1)
     plant.advance(0.05)
-    # 电压链（PE2/CH1）：0.5 分压
+    # 电压链（PE2/AIN1/CH1）：0.5 分压
     code_v = adc_code(plant.pin_voltage_mv())
     assert code_v == pytest.approx(adc_code(2500.0), abs=12)
-    # 电流链（PE3/CH0）：0.1Ω×10 增益
+    # 电流链（PE3/AIN0/CH0）：0.1Ω×10 增益
     code_i = adc_code(plant.pin_current_mv())
     assert code_i == pytest.approx(adc_code(plant.current_a * 1000.0), abs=12)
 
@@ -186,7 +192,7 @@ def test_buck_overcurrent_protection_and_recovery():
     plant.advance(0.05)
     assert plant.vout_mv == pytest.approx(5000.0, rel=0.01)
     from a2000sim.scoring import score_protection
-    assert score_protection(plant.tripped is False, True) == 10
+    assert score_protection(tripped=True, recovered=True) == 10
 
 
 def test_buck_overcurrent_trip_within_course_window():

@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """probe v8 (final): fresh-session reset-halt -> TM1638 real bus drive -> reset run."""
-import socket, time, traceback
+import hashlib, os, socket, time, traceback
 
-OUT = open(r"C:\Users\42400\tools\tm4c_probe\probe8_result.txt", "w", encoding="utf-8")
+RESULT_DIR = os.environ.get("HWPROBE_OUT_DIR", os.path.join(os.path.dirname(__file__), "results"))
+os.makedirs(RESULT_DIR, exist_ok=True)
+OUT = open(os.path.join(RESULT_DIR, "probe8_result.txt"), "w", encoding="utf-8")
 def p(*a):
     line = " ".join(str(x) for x in a)
     print(line); OUT.write(line + "\n"); OUT.flush()
@@ -79,6 +81,14 @@ def rd32(addr, tries=5):
         time.sleep(0.02)
     return None
 
+def rdbytes(addr, nbytes, tries=5):
+    for _ in range(tries):
+        r = rsp.cmd(("m%08x,%x" % (addr, nbytes)).encode())
+        if not r.startswith(b"E") and len(r) >= nbytes * 2:
+            return bytes.fromhex(r[:nbytes * 2].decode())
+        time.sleep(0.02)
+    return None
+
 def mww(addr, val, pushes=2):
     tel.cmd("mww 0x%08X 0x%08X" % (addr, val))
     for _ in range(pushes):
@@ -101,6 +111,27 @@ try:
     sect("1. POST-RESET IDENTITY RE-CHECK + PP SINGLES")
     p("DID0=%08X DID1=%08X" % (rd32(0x400FE000), rd32(0x400FE004)))
     p("FSIZE=%08X SSIZE=%08X  (post-reset)" % (rd32(0x400FDFC0), rd32(0x400FDFC4)))
+
+    sect("1A. FULL FLASH BACKUP (1 MiB)")
+    flash_path = os.environ.get("HWPROBE_FLASH_OUT",
+                                os.path.join(RESULT_DIR, "probe8_flash.bin"))
+    if os.environ.get("HWPROBE_SKIP_FLASH") == "1":
+        p("  SKIP: HWPROBE_SKIP_FLASH=1")
+    else:
+        tmp_path = flash_path + ".tmp"
+        h = hashlib.sha256()
+        total = 0x100000
+        with open(tmp_path, "wb") as fp:
+            for off in range(0, total, 0x400):
+                chunk = rdbytes(off, min(0x400, total - off))
+                if chunk is None:
+                    raise IOError("flash read failed at 0x%08X" % off)
+                fp.write(chunk)
+                h.update(chunk)
+        os.replace(tmp_path, flash_path)
+        p("  wrote %d bytes -> %s" % (total, flash_path))
+        p("  sha256=%s" % h.hexdigest())
+
     ppnames = {0x300: "WD", 0x304: "TIMER", 0x308: "GPIO", 0x30C: "DMA", 0x310: "EPI",
                0x314: "HIB", 0x318: "UART", 0x31C: "SSI", 0x320: "I2C", 0x328: "USB",
                0x330: "EPHY", 0x334: "CAN", 0x338: "ADC", 0x33C: "ACMP", 0x340: "PWM",
@@ -108,7 +139,7 @@ try:
                0x35C: "WTIMER", 0x370: "RTS", 0x374: "CCM", 0x390: "LCD", 0x398: "1WIRE",
                0x39C: "EMAC", 0x3A4: "HIM"}
     for off, nm in ppnames.items():
-        v = rd32(0x400FE300 + off)
+        v = rd32(0x400FE000 + off)
         p("  PP %-8s = %s (%d present)" % (nm, ("%08X" % v) if v is not None else "??",
                                             bin(v).count("1") if v else 0))
 

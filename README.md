@@ -10,14 +10,14 @@
 
 | 层 | 内容 | 状态 |
 |---|---|---|
-| **硬件档案（docs/）** | 基于调试口**实测**的板卡拆解：芯片身份、时钟树、外设清单、寄存器实况、EEPROM 出厂数据、信号链参数 | ✅ 完整（全部来自真实板卡的调试口实测，非纸面资料） |
-| **参考模型层（models/ + tests/）** | TM1638 位级协议模型、DAC6571 软件 I2C 模型、稳压源+信号调理"被控对象"模型、课程算法（滑动窗口平均/迟滞门限/线性标定）——附带与**实测数据**交叉验证的测试 | ✅ `pytest` 全绿（CI 强制） |
+| **硬件档案（docs/）** | 基于调试口实测的板卡拆解：芯片身份、时钟树、寄存器实况、EEPROM、ADC 现象，以及尚待完成的功率板调理标定 | ✅ 核心数字板事实已实测；功率级/调理链仍明确区分理论值、现象学参数与待回填实测值 |
+| **参考模型层（a2000sim/ + tests/）** | TM1638 位级协议模型、DAC6571 软件 I2C 模型、稳压源+信号调理"被控对象"模型、课程算法（滑动窗口平均/迟滞门限/线性标定）——附带与**实测数据**交叉验证的测试 | ✅ `pytest` 全绿（CI 强制） |
 | **固件在环层（renode/）** | Renode 平台 + 虚拟实验台外设（内嵌 IronPython）：TM1638 位级双向对接（**键注入** + 显示捕获）、ADC0 双通道动态电压注入（真 FIFO/RIS 语义）、实验台控制块 0x50000000 | ✅ 已验证：课程 adc_demo.axf 与 demo.axf 均实测通过（电压→显示 "1551"；键 3/7/0 注入→key_code 跟随） |
 | **实板工具（tools/hwprobe/）** | 本项目配套的真板探针：经 ICDI 调试口直读寄存器、实测 ADC/EEPROM、全片 Flash 备份——仿真模型的每个常数都来自它们 | ✅ 可直接复用于任何一块板 |
 
 ## 为什么不是"再写一个模拟器"
 
-项目里的每个魔法数字都有出处（`docs/2-measured-board-facts.md`）：
+项目里的非平凡常数都应有**来源类型**：真板实测 `[M-x]`、数据手册 `[DS]`、原理图/课程资料，或明确标注为理论/现象学假设。`docs/2-measured-board-facts.md` 只承载真板实测，不把设计值冒充测量值：
 
 - 系统时钟 **20.000 MHz** 是实测的：PIOSC 16M × MINT30 ÷ 12 ÷ 2（25 MHz 晶振路径被 VCO 规格物理排除），
   且与固件 SysTick 重装值 `399999` 逐位自洽；
@@ -36,7 +36,7 @@
 ### 1. 跑通参考模型测试（无任何依赖）
 
 ```bash
-pip install -e .
+pip install -e ".[test]"
 pytest tests/ -v
 ```
 
@@ -60,8 +60,8 @@ print(hex(chip.display_ram[0]))      # 0x06 → 数字 1 的段码
 
 ```bash
 renode --console renode/a2000tm4.resc     # 交互式
-# 或
-renode-test renode/tests/fil_adc_demo.robot   # 自动实测（注入电压→断言显示值）
+# 或：按本地已有课程固件独立执行各 FIL 场景，并明确报告 PASS/SKIP
+python tools/fil_smoke.py
 ```
 
 平台细节、v0.1 已知限制与路线图见 `docs/4-renode-fil-design.md`。
@@ -79,9 +79,8 @@ renode-test renode/tests/fil_adc_demo.robot   # 自动实测（注入电压→�
 │   ├── dac6571.py            # 软件 I2C 解码 + DAC 输出模型
 │   ├── plant.py              # 稳压源 + TLV2372 信号调理 + ADC 编码链
 │   ├── fw_algorithms.py      # 课程算法：滑动窗口平均/迟滞/线性标定
-│   └── renode_access.py      # Renode 访问日志 → 引脚事件流解码器
 ├── tests/                    # pytest（含实测数据交叉验证）
-├── renode/                   # Renode 平台（.repl/.resc + Robot 测试）
+├── renode/                   # Renode 平台（.repl/.resc；FIL 回归由 tools/fil_smoke.py 驱动）
 ├── tools/hwprobe/            # 真板探针（ICDI 直读/Flash 备份/ADC 实测）
 └── .github/workflows/ci.yml  # pytest + Renode 平台语法检查
 ```

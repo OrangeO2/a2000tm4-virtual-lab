@@ -39,7 +39,11 @@ _COURSE_KEY_TABLE = {
 
 
 def decode_course_keys(c0: int, c1: int) -> list[int]:
-    """按课程解码表把键扫描字节映射为键号列表（多键同按返回全部命中）。"""
+    """按课程源码的“精确字节相等”规则解码单键。
+
+    多键同时按下会把位 OR 在同一字节中，因此不会匹配单键表；此函数返回 []。
+    这与课程固件行为一致，不宣称支持多键组合解码。
+    """
     keys = [k for k, (idx, val) in _COURSE_KEY_TABLE.items()
             if (c0 if idx == 0 else c1) == val]
     return sorted(keys)

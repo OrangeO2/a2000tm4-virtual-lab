@@ -35,6 +35,9 @@ report.html
 Thumbs.db
 .DS_Store
 
+# 真板探针本地产物
+tools/hwprobe/results/
+
 # 其他
 *.zip
 analysis/

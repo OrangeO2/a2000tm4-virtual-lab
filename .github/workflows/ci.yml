@@ -15,6 +15,8 @@ jobs:
           python-version: "3.11"
       - name: 安装
         run: pip install -e ".[test]"
+      - name: Python 语法编译
+        run: python -m compileall -q a2000sim tests tools
       - name: 测试
         run: python -m pytest tests/ -v
 

@@ -1,8 +1,8 @@
 # hwprobe — 真板硬件探针（调试口实证工具集）
 
 本目录收录对真实 A2000TM4/EK-TM4C1294XL 板卡做调试口实证的 Python 探针脚本。
-`models/` 里的仿真常数与 `docs/2-measured-board-facts.md` 的每一条实测记录
-都出自这些脚本的运行结果——**仿真与实板共用同一套事实**。
+`a2000sim/` 中标为 `[M-x]` 的实测常数来自这些探针与 `docs/2-measured-board-facts.md`；
+数据手册、原理图理论值和现象学参数则分别标记，不再笼统声称所有模型参数都是实测。
 
 ## 工作原理
 
@@ -23,7 +23,9 @@ python probe8.py
 | `probe4.py` | 分层写路径诊断 + 身份寄存器 + SysTick/NVIC 快照 |
 | `probe5.py` | EEPROM 读取（容量/块 0 数据，含出厂 qs_iot 痕迹） |
 | `probe7.py` | ADC 实测（PE2/PE3 静息电压、连续采样衰减、片上温度） |
-| `probe8.py` | 全片 1MB Flash 备份 + TM1638 显示写 + 键扫描回读 |
+| `probe8.py` | 全片 1MB Flash 备份（默认 `results/probe8_flash.bin`，可用 `HWPROBE_SKIP_FLASH=1` 跳过）+ TM1638 显示写 + 键扫描回读 |
+
+探针文本输出默认写入 `tools/hwprobe/results/`；可用 `HWPROBE_OUT_DIR` 改目录。Flash 路径可用 `HWPROBE_FLASH_OUT` 覆盖。
 
 ## 实测结论速览（详见 docs/2-measured-board-facts.md）
 

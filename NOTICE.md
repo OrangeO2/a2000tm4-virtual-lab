@@ -2,7 +2,7 @@
 
 ## 本仓库包含什么
 
-- **原创代码**（MIT）：`models/`、`tests/`、`renode/`、`tools/hwprobe/`、CI 配置。
+- **原创代码**（MIT）：`a2000sim/`、`tests/`、`renode/`、`tools/hwprobe/`、CI 配置。
   这些是本项目的贡献者编写的，包括对真实硬件的实测工具与依据实测结果构建的仿真模型。
 - **事实性数据**：TM4C1294NCPDT 寄存器地址、TM1638 指令码与段码、
   DAC6571 协议常量等，来自 TI / Titan Micro 公开数据手册以及课程公开讲义中的

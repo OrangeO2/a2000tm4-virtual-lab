@@ -287,7 +287,8 @@ def adc_read(off):
 
 def bench_write(off, value):
     if off == 0x00:
-        S["key"] = value & 0xF
+        key = value & 0xF
+        S["key"] = key if 0 <= key <= 9 else 0
     elif off == 0x40:
         S["chmv"][0] = value & 0xFFFF
     elif off == 0x44:
@@ -297,9 +298,9 @@ def bench_write(off, value):
 def bench_read(off):
     if off == 0x00 or off == 0x04:
         return S["key"]
-    if 0x10 <= off < 0x20:
+    if 0x10 <= off < 0x18:
         return decode_seg(S["disp"][(off - 0x10) * 2])
-    if 0x20 <= off < 0x30:
+    if 0x20 <= off < 0x28:
         return S["disp"][(off - 0x20) * 2]
     if 0x30 <= off < 0x38:
         return S["disp"][(off - 0x30) * 2 + 1]
@@ -317,7 +318,7 @@ def bench_read(off):
         return int(3300.0 * S["dacc"] / 1024)
     if off == 0x58:
         return S["dfrms"]
-    if 0x5C <= off < 0x60:
+    if 0x5C <= off < 0x5F:
         return S["lfr"][off - 0x5C]
     if off == 0x60:
         return S.get("istarts", 0)
@@ -370,7 +371,7 @@ if request.IsInit:
     S["pstb"] = 1; S["pclk"] = 1; S["pscl"] = 1; S["psda"] = 1
     S["gmisc"] = {}; S["lmisc"] = {}
     S["actss"] = 0; S["aris"] = 0; S["emux"] = 0; S["ssmux"] = 0; S["ssctl"] = 0; S["apc"] = 7
-    S["fifo"] = []; S["chmv"] = [1150, 1058]; S["alast"] = [0, 0]  # [M-5] 无功率板基线：连续采样尾点 PE3=1150.5/PE2=1058.2 mV
+    S["fifo"] = []; S["chmv"] = [1150, 1058]; S["alast"] = [0, 0]  # [M-5] CH0=PE3/AIN0(电流链), CH1=PE2/AIN1(电压链)；此处为无功率板尾点
     S["dacc"] = 0; S["dfrms"] = 0; S["lfr"] = [0x98, 0x00, 0x00]
     S["istarts"] = 0; S["kdbg"] = 0; S["klast"] = 0
 elif request.IsWrite:
