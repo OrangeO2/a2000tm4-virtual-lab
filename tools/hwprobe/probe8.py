@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """probe v8 (final): fresh-session reset-halt -> TM1638 real bus drive -> reset run."""
-import socket, time, traceback
+import os, socket, time, traceback
 
-OUT = open(r"C:\Users\42400\tools\tm4c_probe\probe8_result.txt", "w", encoding="utf-8")
+RESULT_DIR = os.environ.get("HWPROBE_OUT_DIR", os.path.join(os.path.dirname(__file__), "results"))
+os.makedirs(RESULT_DIR, exist_ok=True)
+OUT = open(os.path.join(RESULT_DIR, "probe8_result.txt"), "w", encoding="utf-8")
 def p(*a):
     line = " ".join(str(x) for x in a)
     print(line); OUT.write(line + "\n"); OUT.flush()
@@ -108,7 +110,7 @@ try:
                0x35C: "WTIMER", 0x370: "RTS", 0x374: "CCM", 0x390: "LCD", 0x398: "1WIRE",
                0x39C: "EMAC", 0x3A4: "HIM"}
     for off, nm in ppnames.items():
-        v = rd32(0x400FE300 + off)
+        v = rd32(0x400FE000 + off)
         p("  PP %-8s = %s (%d present)" % (nm, ("%08X" % v) if v is not None else "??",
                                             bin(v).count("1") if v else 0))
 
